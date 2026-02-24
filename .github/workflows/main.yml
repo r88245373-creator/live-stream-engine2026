@@ -1,0 +1,57 @@
+name: 24/7 Live Stream (Pro Anti-Bot) 24/2/2026
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # إعادة تشغيل تلقائية كل 6 ساعات لضمان الثبات
+  workflow_dispatch: # يسمح لك بتشغيل البث يدوياً في أي وقت
+
+jobs:
+  streaming_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+        with:
+          lfs: true # هام جداً لسحب ملف الفيديو الكبير بدلاً من الإشارة إليه فقط
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Start Stream
+        env:
+          STREAM_URL: ${{ secrets.STREAM_URL }}
+          STREAM_KEY: ${{ secrets.STREAM_KEY }}
+        run: |
+          # حلقة تكرارية لضمان استمرار البث وإعادة التشغيل عند حدوث خطأ
+          while true; do
+
+            echo "Generating new shuffled playlist..."
+            rm -f playlist.txt
+
+            # إنشاء قائمة تشغيل من ملفات MP3 في مجلد music
+            for f in ./music/*.mp3; do
+              echo "file '$PWD/$f'" >> playlist.txt
+            done
+
+            # خلط الأغاني عشوائياً لضمان تغيير الـ Hash الصوتي في كل مرة
+            shuf playlist.txt -o playlist.txt
+
+            echo "Starting FFmpeg stream with Hash-Changing Filters..."
+
+            # الأمر النهائي: دمج الفيديو، الصوت، الفلاتر البصرية، وضبط الإطارات المفتاحية
+            ffmpeg -re -stream_loop -1 -i "test1-2026.mp4" \
+            -f concat -safe 0 -i playlist.txt \
+            -c:v libx264 -preset ultrafast -tune zerolatency \
+            -x264-params "keyint=60:min-keyint=60:scenecut=-1" \
+            -vf "hue=s=1.01" \
+            -b:v 4000k -maxrate 4000k -bufsize 8000k -nal-hrd cbr \
+            -c:a aac -b:a 128k -ar 44100 -ac 2 \
+            -map 0:v:0 -map 1:a:0 -shortest \
+            -fflags +genpts+round_timestamps \
+            -f flv "$STREAM_URL/$STREAM_KEY"
+
+            echo "FFmpeg stopped. Restarting in 5 seconds..."
+            sleep 5
+          done
