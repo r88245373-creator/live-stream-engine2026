@@ -1,0 +1,82 @@
+name: 24/7 Live Stream (Updated Video) 25/2/2026
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  streaming_job:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production-stream
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+        with:
+          lfs: false
+
+      - name: Install FFmpeg and Wget
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg wget
+
+      - name: Download Video from Google Drive
+        run: |
+          echo "Installing gdown..."
+          pip install --quiet gdown
+
+          # تم تحديث المعرف هنا بناءً على الرابط الجديد
+          FILE_ID="1K8a6XuVueqSyss4d_7mWka344FqsJqQI"
+          OUTPUT="test1-2026.mp4"
+
+          echo "Downloading new Google Drive file..."
+          if gdown "https://drive.google.com/uc?id=${FILE_ID}" -O ${OUTPUT}; then
+              echo "Download successful."
+          else
+              echo "Download failed. Using backup.mp4 if available"
+              if [ -f "backup.mp4" ]; then
+                  cp backup.mp4 test1-2026.mp4
+              else
+                  echo "No video file found to stream!"
+                  exit 1
+              fi
+          fi
+
+          # التأكد من سلامة الملف
+          if ! ffmpeg -v error -i ${OUTPUT} -f null - 2>/dev/null; then
+              echo "Corrupted video detected!"
+              exit 1
+          fi
+
+      - name: Start Stream
+        env:
+          STREAM_URL: ${{ secrets.STREAM_URL }}
+          STREAM_KEY: ${{ secrets.STREAM_KEY }}
+        run: |
+          while true; do
+            echo "Generating subtle dynamic filters for Anti-Bot..."
+            BRIGHT=$(awk -v min=-0.02 -v max=0.02 'BEGIN{srand(); print min+rand()*(max-min)}')
+            CONTRAST=$(awk -v min=0.98 -v max=1.02 'BEGIN{srand(); print min+rand()*(max-min)}')
+            SAT=$(awk -v min=0.98 -v max=1.02 'BEGIN{srand(); print min+rand()*(max-min)}')
+
+            echo "Starting FFmpeg Stream..."
+            ffmpeg -re -stream_loop -1 -i "test1-2026.mp4" \
+              -c:v libx264 -preset veryfast -tune zerolatency \
+              -threads 2 \
+              -x264-params "keyint=60:min-keyint=60:scenecut=-1" \
+              -vf "eq=brightness=${BRIGHT}:contrast=${CONTRAST}:saturation=${SAT}" \
+              -b:v 3500k -maxrate 3500k -bufsize 7000k -nal-hrd cbr \
+              -pix_fmt yuv420p \
+              -c:a aac -b:a 128k -ar 44100 -ac 2 \
+              -af "aresample=async=1:min_hard_comp=0.100:first_pts=0" \
+              -map_metadata -1 \
+              -max_muxing_queue_size 1024 \
+              -fflags +genpts \
+              -f flv "${STREAM_URL}/${STREAM_KEY}"
+
+            echo "FFmpeg stopped. Restarting in 5 seconds..."
+            sleep 5
+          done
