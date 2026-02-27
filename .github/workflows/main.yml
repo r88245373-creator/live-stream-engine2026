@@ -1,0 +1,84 @@
+name: 🚀 PRO Stream - 4H Stable 2026
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ultra_pro_stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 250 # Total safety limit: 4h 10m
+    
+    container:
+      image: linuxserver/ffmpeg:latest
+      options: --user root
+
+    env:
+      STREAM_URL: ${{ secrets.STREAM_URL }}
+      VIDEO_FILE: "video.mp4"
+      FILE_ID: "1AeXOl9kq9QF7VY4Feb7sXFIOswGdAzYA"
+
+    steps:
+      - name: ⚡ Quick Tools Setup
+        run: |
+          apt-get update && apt-get install -y python3 python3-pip wget curl
+          python3 -m pip install --quiet gdown --break-system-packages || pip3 install --quiet gdown
+
+      - name: 💾 Video Cache
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.VIDEO_FILE }}
+          key: video-4h-v2
+
+      - name: 📥 Download Video
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          gdown "https://drive.google.com/uc?id=${{ env.FILE_ID }}" -O "${{ env.VIDEO_FILE }}" --fuzzy || \
+          curl -L -o "${{ env.VIDEO_FILE }}" "https://github.com/${{ github.repository }}/releases/download/latest/backup.mp4"
+
+      - name: 🎬 Run 4-Hour Loop with Frame-Sync Preserved
+        run: |
+          # 14400 seconds = 4 Hours
+          DURATION=14400
+          END_TIME=$(( $(date +%s) + DURATION ))
+          
+          echo "🎬 Stream Status: Starting 4-hour broadcast with frame-sync preserved..."
+          echo "Stream will end at: $(date -d @$END_TIME)"
+          
+          # Check if video file exists
+          if [ ! -f "${{ env.VIDEO_FILE }}" ]; then
+            echo "❌ Video file not found!"
+            exit 1
+          fi
+          
+          echo "📹 Video file size: $(du -h ${{ env.VIDEO_FILE }} | cut -f1)"
+          
+          # Resiliency loop: auto-reconnects if the network drops
+          while [ $(date +%s) -lt $END_TIME ]; do
+            REMAINING=$(( END_TIME - $(date +%s) ))
+            echo "⏱️ Remaining time: $((REMAINING/3600))h $(((REMAINING%3600)/60))m $((REMAINING%60))s"
+            
+            # Fixed FFmpeg command - removed inline comments
+            ffmpeg -hide_banner -loglevel warning -re -stream_loop -1 \
+              -i "${{ env.VIDEO_FILE }}" \
+              -vf "hue=h=2.5:s=1.02,eq=contrast=1.02:brightness=0.02,noise=alls=2:allf=t" \
+              -af "volume=1.02,aformat=sample_fmts=fltp:sample_rates=44100,loudnorm=I=-16:LRA=11:TP=-1.5" \
+              -c:v libx264 -preset ultrafast -tune zerolatency \
+              -b:v 4500k -maxrate 4500k -bufsize 9000k \
+              -pix_fmt yuv420p -g 60 \
+              -c:a aac -b:a 128k -ar 44100 \
+              -vsync 0 -async 1 \
+              -f flv -t $REMAINING \
+              "${{ env.STREAM_URL }}/${{ secrets.STREAM_KEY }}" || (
+                echo "⚠️ Connection lost at $(date). Retrying in 5s..." && \
+                sleep 5
+              )
+          done
+
+      - name: ✅ Final Log
+        if: always()
+        run: echo "✅ Stream job finished at $(date)"
