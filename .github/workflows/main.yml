@@ -1,0 +1,50 @@
+name: PRO Stream - Ultimate Version 2026
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pro_streaming_job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5 hours total
+    
+    env:
+      STREAM_URL: ${{ secrets.STREAM_URL }}
+      VIDEO_FILE: "pro_stream_video.mp4"
+      BACKUP_FILE: "backup.mp4"
+      TEMP_DIR: "/tmp/pro_stream_${{ github.run_id }}"
+      FILE_ID: "1YTmGPf2Zd--xfSDOTGQoui5kyHpTJLu-"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🔐 Pro Security Environment Setup
+        run: |
+          mkdir -p "${{ env.TEMP_DIR }}"
+          echo "${{ secrets.STREAM_KEY }}" > "${{ env.TEMP_DIR }}/.stream_key"
+          chmod 400 "${{ env.TEMP_DIR }}/.stream_key"
+
+      - name: 🛠️ Install Pro Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg wget bc curl jq netcat procps python3-pip expect parallel
+          pip3 install --quiet gdown
+
+      - name: 📥 Pro Smart Download
+        run: |
+          echo "Downloading file..."
+          gdown "https://drive.google.com/uc?id=${{ env.FILE_ID }}" -O "${{ env.VIDEO_FILE }}" --fuzzy || \
+          curl -L -o "${{ env.VIDEO_FILE }}" "https://github.com/${{ github.repository }}/releases/download/latest/backup.mp4"
+
+      - name: 🚀 Start PRO Stream - 5 Hours Continuous
+        run: |
+          STREAM_KEY=$(cat "${{ env.TEMP_DIR }}/.stream_key")
+          ffmpeg -re -stream_loop -1 -i "${{ env.VIDEO_FILE }}" -c:v libx264 -preset ultrafast -b:v 4500k -c:a aac -b:a 192k -f flv "${{ env.STREAM_URL }}/$STREAM_KEY" -t 18000  # 5 hours = 18000 seconds
+
+      - name: 🧹 PRO Secure Cleanup
+        if: always()
+        run: rm -rf "${{ env.TEMP_DIR }}"
