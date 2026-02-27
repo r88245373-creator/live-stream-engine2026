@@ -1,0 +1,64 @@
+name: 🚀 PRO Stream - 4H Stable 2026
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ultra_pro_stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 250 # 4 Hours + 10 mins buffer
+    
+    container:
+      image: linuxserver/ffmpeg:latest
+      options: --user root
+
+    env:
+      STREAM_URL: ${{ secrets.STREAM_URL }}
+      VIDEO_FILE: "video.mp4"
+      FILE_ID: "1YTmGPf2Zd--xfSDOTGQoui5kyHpTJLu-"
+
+    steps:
+      - name: ⚡ Quick Tools Setup
+        run: |
+          apk add --no-cache python3 py3-pip wget curl
+          pip3 install --break-system-packages --quiet gdown
+
+      - name: 💾 Video Cache
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.VIDEO_FILE }}
+          key: video-fixed-4h
+
+      - name: 📥 Download Video
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          gdown "${{ env.FILE_ID }}" -O "${{ env.VIDEO_FILE }}" --fuzzy
+
+      - name: 🎬 Run 4-Hour Loop
+        run: |
+          # 14400 seconds = 4 Hours
+          DURATION=14400
+          END_TIME=$(( $(date +%s) + DURATION ))
+          
+          echo "🎬 Stream Status: Starting 4-hour broadcast..."
+          
+          while [ $(date +%s) -lt $END_TIME ]; do
+            REMAINING=$(( END_TIME - $(date +%s) ))
+            
+            ffmpeg -hide_banner -loglevel warning -re -stream_loop -1 \
+              -i "${{ env.VIDEO_FILE }}" \
+              -c:v libx264 -preset ultrafast -tune zerolatency \
+              -b:v 4500k -maxrate 4500k -bufsize 9000k \
+              -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+              -f flv -t $REMAINING \
+              "${{ env.STREAM_URL }}/${{ secrets.STREAM_KEY }}" || (echo "⚠️ Connection lost. Retrying in 5s..." && sleep 5)
+          done
+
+      - name: ✅ Final Log
+        if: always()
+        run: echo "Stream job finished at $(date)"
