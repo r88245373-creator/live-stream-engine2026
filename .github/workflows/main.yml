@@ -1,0 +1,47 @@
+name: YouTube Stream
+
+on:
+  workflow_dispatch:
+
+jobs:
+  streaming_job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Stream to YouTube Live
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+          BOTTOM_TEXT: ${{ github.event.inputs.bottom_text }}
+        run: |
+          URL1=$(cat L1.txt)
+          URL2=$(cat L2.txt)
+          URL3=$(cat L3.txt)
+          URL4=$(cat L4.txt)
+          URL5=$(cat L5.txt)
+
+          ffmpeg \
+            -loop 1 -i background.png \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$URL1" \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$URL2" \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$URL3" \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$URL4" \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$URL5" \
+            -filter_complex "[1:v]scale=1920:1000:force_original_aspect_ratio=decrease,pad=1920:1000:(ow-iw)/2:(oh-ih)/2[green]; \
+                             [2:v]scale=1920:1000:force_original_aspect_ratio=decrease,pad=1920:1000:(ow-iw)/2:(oh-ih)/2[red]; \
+                             [3:v]scale=1520:940:force_original_aspect_ratio=decrease,pad=1520:940:(ow-iw)/2:(oh-ih)/2[yellow]; \
+                             [4:v]scale=1540:940:force_original_aspect_ratio=decrease,pad=1540:940:(ow-iw)/2:(oh-ih)/2[blue]; \
+                             [5:v]scale=780:940:force_original_aspect_ratio=decrease,pad=780:940:(ow-iw)/2:(oh-ih)/2[grey]; \
+                             [0:v][green]overlay=0:0[tmp1]; \
+                             [tmp1][red]overlay=1920:0[tmp2]; \
+                             [tmp2][yellow]overlay=0:1000[tmp3]; \
+                             [tmp3][blue]overlay=1520:1000[tmp4]; \
+                             [tmp4][grey]overlay=3060:1000[tmp5]; \
+                             [tmp5]drawtext=text='${BOTTOM_TEXT}':fontcolor=white:fontsize=100:borderw=4:bordercolor=black:x=w-mod(t*250\,w+tw):y=2050+((2160-2050-th)/2)[out]" \
+            -map "[out]" \
+            -c:v libx264 -preset veryfast -b:v 4500k -maxrate 4500k -bufsize 9000k \
+            -pix_fmt yuv420p -g 50 \
+            -c:a aac -b:a 128k \
+            -f flv "rtmp://a.rtmp.youtube.com/live2/${STREAM_KEY}"
