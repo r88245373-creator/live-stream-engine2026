@@ -1,0 +1,73 @@
+name: 📡 IRAN NOW - Final Fixed 2K
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'فيديو 1 (الأخضر)', required: true }
+      url2: { description: 'فيديو 2 (الأحمر)', required: true }
+      url3: { description: 'فيديو 3 (الأصفر)', required: true }
+      url4: { description: 'فيديو 4 (الأزرق)', required: true }
+      url5: { description: 'فيديو 5 (الرمادي)', required: true }
+      bottom_text: { description: 'نص الشريط المتحرك', required: false, default: 'بث مباشر - تغطية مستمرة' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '6' }
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip
+        pip3 install gdown
+
+    - name: Download Videos
+      run: |
+        extract_id() {
+          echo "$1" | sed -E 's/.*(\/d\/|id=)([a-zA-Z0-9_-]+).*/\2/'
+        }
+        mkdir -p videos
+        URLS=("${{ github.event.inputs.url1 }}" "${{ github.event.inputs.url2 }}" "${{ github.event.inputs.url3 }}" "${{ github.event.inputs.url4 }}" "${{ github.event.inputs.url5 }}")
+        for i in "${!URLS[@]}"; do
+          ID=$(extract_id "${URLS[$i]}")
+          gdown --id "$ID" -O "videos/video$((i+1)).mp4" || ffmpeg -f lavfi -i color=c=black:s=1280x720:d=1 -frames:v 1 "videos/video$((i+1)).mp4"
+        done
+
+    - name: Start Stream (Fixed 1440p)
+      env:
+        S_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+      run: |
+        DURATION_SEC=$(( ${{ github.event.inputs.stream_duration }} * 3600 ))
+        export TZ="Asia/Tehran"
+        
+        # استخدام المتغيرات مباشرة في نهاية الأمر لحل مشكلة الاتصال
+        ffmpeg -re -stream_loop -1 -i "pro dashboard v3.0.png" \
+               -re -stream_loop -1 -i "videos/video1.mp4" \
+               -re -stream_loop -1 -i "videos/video2.mp4" \
+               -re -stream_loop -1 -i "videos/video3.mp4" \
+               -re -stream_loop -1 -i "videos/video4.mp4" \
+               -re -stream_loop -1 -i "videos/video5.mp4" \
+               -filter_complex " \
+                [0:v]scale=2560:1440[bg]; \
+                [1:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720[v1]; \
+                [2:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720[v2]; \
+                [3:v]scale=1015:720:force_original_aspect_ratio=increase,crop=1015:720[v3]; \
+                [4:v]scale=1025:720:force_original_aspect_ratio=increase,crop=1025:720[v4]; \
+                [5:v]scale=520:720:force_original_aspect_ratio=increase,crop=520:720[v5]; \
+                [bg][v1]overlay=x=0:y=0[b1]; \
+                [b1][v2]overlay=x=1280:y=0[b2]; \
+                [b2][v3]overlay=x=0:y=720[b3]; \
+                [b3][v4]overlay=x=1015:y=720[b4]; \
+                [b4][v5]overlay=x=2040:y=720[b5]; \
+                [b5]drawtext=text='%{localtime\:%H\\\\\:%M\\\\\:%S}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize=55:x=w-250:y=40:box=1:boxcolor=black@0.7[clk]; \
+                [clk]drawtext=text='${{ github.event.inputs.bottom_text }}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=70:y=h-100:x=w-mod(t*180\,w+tw)[out]" \
+               -map "[out]" \
+               -map 2:a? \
+               -c:v libx264 -preset ultrafast -tune zerolatency -threads 0 \
+               -b:v 8000k -maxrate 8000k -bufsize 16000k \
+               -pix_fmt yuv420p -g 60 \
+               -c:a aac -b:a 128k -ar 44100 \
+               -f flv -t $DURATION_SEC \
+               "rtmps://a.rtmp.youtube.com:443/live2/$S_KEY"
