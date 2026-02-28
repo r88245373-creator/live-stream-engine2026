@@ -157,7 +157,7 @@ jobs:
             -filter_complex "$FILTER" -map "[out]" -map 1:a? \
             -c:v libx264 -preset ultrafast -tune zerolatency -b:v 2500k -maxrate 2500k -bufsize 5000k \
             -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
-            -f flv "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY" 2>ffmpeg_error.log || {
+            -f flv "rtmp://a.rtmp.youtube.com/live2?key=$STREAM_KEY" 2>ffmpeg_error.log || {
             
             # التحقق من نوع الخطأ
             if grep -q "Invalid argument" ffmpeg_error.log; then
