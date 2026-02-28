@@ -1,0 +1,140 @@
+name: 📡 IRAN NOW - Ultimate Manual Stream
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'رابط فيديو 1 من Google Drive', required: true }
+      url2: { description: 'رابط فيديو 2 من Google Drive', required: true }
+      url3: { description: 'رابط فيديو 3 من Google Drive', required: true }
+      url4: { description: 'رابط فيديو 4 من Google Drive', required: true }
+      url5: { description: 'رابط فيديو 5 من Google Drive', required: true }
+      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+  STREAM_URL: "rtmp://a.rtmp.youtube.com/live2"
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: تثبيت المتطلبات الكاملة
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip python3-venv
+        pip3 install --upgrade pip
+        pip3 install gdown
+
+    - name: تجهيز الخلفية والتوقيت
+      id: timing
+      run: |
+        # تحميل الخلفية الرئيسية
+        gdown --id 1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ -O background.png || ffmpeg -f lavfi -i color=c=black:s=1920x1080 -frames:v 1 background.png
+        
+        # إنشاء فيديو احتياطي (30 ثانية من الألوان المتحركة)
+        ffmpeg -f lavfi -i testsrc=size=640x480:rate=30:duration=30 \
+               -f lavfi -i sine=frequency=1000:duration=30 \
+               -c:v libx264 -c:a aac -t 30 placeholder.mp4
+        
+        echo "end_time=$(($(date +%s) + (${{ github.event.inputs.stream_duration }} * 3600)))" >> $GITHUB_OUTPUT
+
+    - name: تحميل الفيديوهات من Google Drive
+      run: |
+        # دالة لاستخراج File ID من رابط Google Drive
+        extract_file_id() {
+          local url="$1"
+          if [[ $url =~ /d/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+          elif [[ $url =~ id=([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+          else
+            echo ""
+          fi
+        }
+
+        # تحميل جميع الفيديوهات
+        mkdir -p videos
+        
+        for i in {1..5}; do
+          url_var="url$i"
+          url="${!url_var}"
+          file_id=$(extract_file_id "$url")
+          
+          echo "🔄 تحميل video$i من: $url"
+          
+          if [[ -n "$file_id" ]]; then
+            # تحميل الفيديو باستخدام gdown
+            if gdown --id "$file_id" -O "videos/video$i.mp4"; then
+              echo "✅ تم تحميل video$i.mp4 بنجاح"
+              
+              # التحقق من حجم الملف (إذا كان صغيراً جداً، قد يكون خطأ)
+              filesize=$(stat -c%s "videos/video$i.mp4")
+              if [[ $filesize -lt 100000 ]]; then  # أقل من 100KB
+                echo "⚠️ الملف صغير جداً ($filesize بايت)، قد لا يكون فيديو صحيح"
+              fi
+            else
+              echo "⚠️ فشل تحميل video$i، استخدام الفيديو الاحتياطي"
+              cp placeholder.mp4 "videos/video$i.mp4"
+            fi
+          else
+            echo "⚠️ رابط غير صالح: $url"
+            cp placeholder.mp4 "videos/video$i.mp4"
+          fi
+        done
+        
+        # عرض حجم الملفات للتأكد
+        echo "📊 أحجام الملفات:"
+        ls -la videos/
+
+    - name: بدء البث المباشر
+      run: |
+        # نص الشريط المتحرك
+        BOTTOM_TEXT="${{ github.event.inputs.bottom_text }}"
+        
+        # فلتر دمج الشاشات
+        FILTER="[1:v]scale=960:540,setsar=1[v1]; \
+                [2:v]scale=960:540,setsar=1[v2]; \
+                [3:v]scale=640:540,setsar=1,format=yuv420p[v3]; \
+                [4:v]scale=640:540,setsar=1,format=yuv420p[v4]; \
+                [5:v]scale=640:540,setsar=1,format=yuv420p[v5]; \
+                [0:v]scale=1920:1080,format=yuv420p[bg]; \
+                [bg][v1]overlay=0:0[b1]; \
+                [b1][v2]overlay=960:0[b2]; \
+                [b2][v3]overlay=0:540[b3]; \
+                [b3][v4]overlay=640:540[b4]; \
+                [b4][v5]overlay=1280:540[base]; \
+                [base]drawtext=text='${BOTTOM_TEXT}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:x=w-150*t:y=h-80:box=1:boxcolor=black@0.6:boxborderw=10,format=yuv420p[out]"
+
+        echo "🔄 بدء البث المباشر حتى $(date -d @${{ steps.timing.outputs.end_time }})"
+        echo "🚀 عنوان البث: ${{ env.STREAM_URL }}"
+        
+        while [ $(date +%s) -lt ${{ steps.timing.outputs.end_time }} ]; do
+          echo "🚀 بدء دورة بث جديدة في $(date)"
+          
+          # التحقق من وجود الفيديوهات قبل البث
+          for i in {1..5}; do
+            if [[ ! -f "videos/video$i.mp4" ]]; then
+              echo "⚠️ video$i.mp4 غير موجود، استخدام الفيديو الاحتياطي"
+              cp placeholder.mp4 "videos/video$i.mp4"
+            fi
+          done
+          
+          # تشغيل البث
+          ffmpeg -re -stream_loop -1 -i background.png \
+            -stream_loop -1 -i videos/video1.mp4 \
+            -stream_loop -1 -i videos/video2.mp4 \
+            -stream_loop -1 -i videos/video3.mp4 \
+            -stream_loop -1 -i videos/video4.mp4 \
+            -stream_loop -1 -i videos/video5.mp4 \
+            -filter_complex "$FILTER" -map "[out]" -map 1:a? \
+            -c:v libx264 -preset ultrafast -tune zerolatency -b:v 2500k -maxrate 2500k -bufsize 5000k \
+            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "${{ env.STREAM_URL }}/${{ secrets.STREAM_KEY }}"
+          
+          echo "⚠️ توقف البث، إعادة المحاولة بعد 5 ثواني..."
+          sleep 5
+        done
+        
+        echo "✅ انتهى وقت البث المقرر"
