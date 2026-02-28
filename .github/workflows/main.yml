@@ -1,0 +1,76 @@
+name: 📡 IRAN NOW - Ultimate Pro Stream
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'رابط فيديو 1 (الأخضر)', required: true }
+      url2: { description: 'رابط فيديو 2 (الأحمر)', required: true }
+      url3: { description: 'رابط فيديو 3 (الأصفر)', required: true }
+      url4: { description: 'رابط فيديو 4 (الأزرق)', required: true }
+      url5: { description: 'رابط فيديو 5 (الرمادي)', required: true }
+      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+  STREAM_URL: "rtmps://a.rtmp.youtube.com:443/live2"
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Install Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip
+        pip3 install gdown
+
+    - name: Download Videos
+      run: |
+        extract_id() {
+          echo "$1" | sed -E 's/.*(\/d\/|id=)([a-zA-Z0-9_-]+).*/\2/'
+        }
+        mkdir -p videos
+        # تصحيح: جلب المدخلات باستخدام env لتجنب أخطاء Syntax
+        VIDEO_URLS=("${{ github.event.inputs.url1 }}" "${{ github.event.inputs.url2 }}" "${{ github.event.inputs.url3 }}" "${{ github.event.inputs.url4 }}" "${{ github.event.inputs.url5 }}")
+        
+        for i in "${!VIDEO_URLS[@]}"; do
+          ID=$(extract_id "${VIDEO_URLS[$i]}")
+          echo "🔄 Downloading Video $((i+1))..."
+          gdown --id "$ID" -O "videos/video$((i+1)).mp4" || ffmpeg -f lavfi -i color=c=black:s=640x480:d=10 -c:v libx264 "videos/video$((i+1)).mp4"
+        done
+
+    - name: Start Live Stream
+      run: |
+        DURATION_SEC=$(( ${{ github.event.inputs.stream_duration }} * 3600 ))
+        STREAM_URL_FULL="${{ env.STREAM_URL }}/${{ secrets.YOUTUBE_STREAM_KEY }}"
+        B_TEXT="${{ github.event.inputs.bottom_text }}"
+        
+        # ضبط المنطقة الزمنية لإظهار وقت طهران في البث
+        export TZ="Asia/Tehran"
+
+        ffmpeg -re -stream_loop -1 -i "pro dashboard v2.0.png" \
+               -re -stream_loop -1 -i "videos/video1.mp4" \
+               -re -stream_loop -1 -i "videos/video2.mp4" \
+               -re -stream_loop -1 -i "videos/video3.mp4" \
+               -re -stream_loop -1 -i "videos/video4.mp4" \
+               -re -stream_loop -1 -i "videos/video5.mp4" \
+               -filter_complex " \
+                [1:v]scale=1920:1000:force_original_aspect_ratio=decrease,pad=1920:1000:(ow-iw)/2:(oh-ih)/2[green]; \
+                [2:v]scale=1920:1000:force_original_aspect_ratio=decrease,pad=1920:1000:(ow-iw)/2:(oh-ih)/2[red]; \
+                [3:v]scale=1520:940:force_original_aspect_ratio=decrease,pad=1520:940:(ow-iw)/2:(oh-ih)/2[yellow]; \
+                [4:v]scale=1540:940:force_original_aspect_ratio=decrease,pad=1540:940:(ow-iw)/2:(oh-ih)/2[blue]; \
+                [5:v]scale=780:940:force_original_aspect_ratio=decrease,pad=780:940:(ow-iw)/2:(oh-ih)/2[grey]; \
+                [0:v][green]overlay=x=0:y=0[b1]; \
+                [b1][red]overlay=x=1920:y=0[b2]; \
+                [b2][yellow]overlay=x=0:y=1000[b3]; \
+                [b3][blue]overlay=x=1520:y=1000[b4]; \
+                [b4][grey]overlay=x=3060:y=1000[b5]; \
+                [b5]drawtext=text='%{localtime\:%H\\\\\:%M\\\\\:%S}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=yellow:fontsize=50:x=w-250:y=50:box=1:boxcolor=black@0.7[clk]; \
+                [clk]drawtext=text='${B_TEXT}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=80:y=h-120:x=w-mod(t*150\,w+tw)[out]" \
+               -map "[out]" -map 1:a? \
+               -c:v libx264 -preset ultrafast -tune zerolatency -b:v 4500k \
+               -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -f flv -t $DURATION_SEC \
+               "$STREAM_URL_FULL"
