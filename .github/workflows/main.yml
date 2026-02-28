@@ -1,0 +1,63 @@
+name: 📡 IRAN NOW - Ultimate Manual Stream
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'رابط فيديو 1', required: true }
+      url2: { description: 'رابط فيديو 2', required: true }
+      url3: { description: 'رابط فيديو 3', required: true }
+      url4: { description: 'رابط فيديو 4', required: true }
+      url5: { description: 'رابط فيديو 5', required: true }
+      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: تثبيت FFmpeg و yt-dlp ومكتبات المحاكاة
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip
+        # تثبيت yt-dlp مع دعم المحاكاة (Impersonate) لتجاوز الحماية
+        pip3 install -U "yt-dlp[build-in]" gdown
+
+    - name: تجهيز الخلفية والتوقيت
+      id: timing
+      run: |
+        gdown --id 1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ -O background.png || ffmpeg -f lavfi -i color=c=black:s=1920x1080 -frames:v 1 background.png
+        echo "end_time=$(($(date +%s) + (${{ github.event.inputs.stream_duration }} * 3600)))" >> $GITHUB_OUTPUT
+
+    - name: بدء البث المباشر
+      run: |
+        # استخدام متصفح وهمي لتجاوز حماية Cloudflare و Dailymotion
+        EXTRACT="yt-dlp --quiet --no-warnings --get-url --impersonate chrome"
+        
+        V1=$($EXTRACT "${{ github.event.inputs.url1 }}")
+        V2=$($EXTRACT "${{ github.event.inputs.url2 }}")
+        V3=$($EXTRACT "${{ github.event.inputs.url3 }}")
+        V4=$($EXTRACT "${{ github.event.inputs.url4 }}")
+        V5=$($EXTRACT "${{ github.event.inputs.url5 }}")
+
+        # معالجة الخلفية بدقة 4K إذا لزم الأمر لتناسب الفلتر
+        FILTER="[1:v]scale=960:540,setsar=1[v1]; [2:v]scale=960:540,setsar=1[v2]; \
+                [3:v]scale=640:540,setsar=1[v3]; [4:v]scale=640:540,setsar=1[v4]; \
+                [5:v]scale=640:540,setsar=1[v5]; [0:v]scale=1920:1080[bg]; \
+                [bg][v1]overlay=0:0[b1]; [b1][v2]overlay=960:0[b2]; \
+                [b2][v3]overlay=0:540[b3]; [b3][v4]overlay=640:540[b4]; \
+                [b4][v5]overlay=1280:540[b5]; \
+                [b5]drawtext=text='${{ github.event.inputs.bottom_text }}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:x=w-mod(150*t\,w+tw):y=h-80:box=1:boxcolor=black@0.6[out]"
+
+        while [ $(date +%s) -lt ${{ steps.timing.outputs.end_time }} ]; do
+          ffmpeg -re -stream_loop -1 -i background.png \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
+            -i "$V1" -i "$V2" -i "$V3" -i "$V4" -i "$V5" \
+            -filter_complex "$FILTER" -map "[out]" -map 1:a \
+            -c:v libx264 -preset ultrafast -tune zerolatency -b:v 3000k \
+            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY" || sleep 10
+        done
