@@ -1,0 +1,88 @@
+name: 📡 IRAN NOW - Professional 24/7 Live Stream Engine
+on:
+  schedule:
+    - cron: '55 */5 * * *'
+  workflow_dispatch:
+    inputs:
+      bottom_text:
+        description: 'نص الشريط المتحرك السفلي'
+        required: false
+        default: 'بث مباشر 24/7'
+      stream_duration:
+        description: 'مدة البث بالساعات'
+        required: false
+        default: '5'
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+  FFMPEG_LOG_LEVEL: warning
+
+jobs:
+  stream:
+    name: تشغيل البث المباشر
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+    - name: استنساخ المستودع
+      uses: actions/checkout@v4
+
+    - name: تثبيت FFmpeg والإضافات
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core bc
+
+    - name: فحص وحساب التوقيت
+      id: timing
+      run: |
+        START_TIME=$(date +%s)
+        DURATION=${{ github.event.inputs.stream_duration || 5 }}
+        END_TIME=$(($START_TIME + ($DURATION * 3600)))
+        echo "end_time=$END_TIME" >> $GITHUB_OUTPUT
+        
+        # التأكد من وجود ملفات الروابط قبل البدء
+        for i in {1..5}; do
+          if [ ! -f "L$i.txt" ]; then
+            echo "❌ ملف L$i.txt مفقود! سيتم إنشاء ملف تجريبي لتجنب الانهيار."
+            echo "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4" > "L$i.txt"
+          fi
+        done
+
+    - name: بدء البث الاحترافي
+      run: |
+        # 1. استيراد الروابط وتنظيفها (الحل النهائي لمشكلتك)
+        URL1=$(sed -e 's/[[:space:]]*$//' L1.txt | head -n 1)
+        URL2=$(sed -e 's/[[:space:]]*$//' L2.txt | head -n 1)
+        URL3=$(sed -e 's/[[:space:]]*$//' L3.txt | head -n 1)
+        URL4=$(sed -e 's/[[:space:]]*$//' L4.txt | head -n 1)
+        URL5=$(sed -e 's/[[:space:]]*$//' L5.txt | head -n 1)
+
+        echo "🚀 الروابط جاهزة، تبدأ المعالجة الآن..."
+
+        # 2. فلتر توزيع الشاشات (2 فوق، 3 تحت)
+        # تقسيم 1920x1080 بدقة
+        FILTER="[1:v]scale=960:540,setsar=1[v1]; \
+                [2:v]scale=960:540,setsar=1[v2]; \
+                [3:v]scale=640:540,setsar=1[v3]; \
+                [4:v]scale=640:540,setsar=1[v4]; \
+                [5:v]scale=640:540,setsar=1[v5]; \
+                [0:v][v1]overlay=0:0[top1]; \
+                [top1][v2]overlay=960:0[top2]; \
+                [top2][v3]overlay=0:540[mid1]; \
+                [mid1][v4]overlay=640:540[mid2]; \
+                [mid2][v5]overlay=1280:540[final]; \
+                [final]drawtext=text='${{ github.event.inputs.bottom_text || 'بث مباشر 24/7' }}':\
+                fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:\
+                x=w-mod(150*t\,w+tw):y=h-80:box=1:boxcolor=black@0.6[out]"
+
+        # 3. حلقة البث المستمر
+        while [ $(date +%s) -lt ${{ steps.timing.outputs.end_time }} ]; do
+          ffmpeg -re -stream_loop -1 -i background.png \
+            -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
+            -i "$URL1" -i "$URL2" -i "$URL3" -i "$URL4" -i "$URL5" \
+            -filter_complex "$FILTER" -map "[out]" -map 1:a \
+            -c:v libx264 -preset ultrafast -tune zerolatency -b:v 3500k -maxrate 3500k -bufsize 7000k \
+            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY" || echo "⚠️ محاولة إعادة اتصال..."
+          sleep 5
+        done
