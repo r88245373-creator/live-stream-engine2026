@@ -1,148 +1,0 @@
-name: 📡 IRAN NOW - Ultimate Manual Stream
-on:
-  workflow_dispatch:
-    inputs:
-      url1: { description: 'رابط فيديو 1 من Google Drive', required: true }
-      url2: { description: 'رابط فيديو 2 من Google Drive', required: true }
-      url3: { description: 'رابط فيديو 3 من Google Drive', required: true }
-      url4: { description: 'رابط فيديو 4 من Google Drive', required: true }
-      url5: { description: 'رابط فيديو 5 من Google Drive', required: true }
-      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
-      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
-
-env:
-  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
-  STREAM_URL: "rtmps://a.rtmp.youtube.com:443/live2"
-
-jobs:
-  stream:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: تثبيت المتطلبات الكاملة
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip
-        pip3 install --upgrade pip
-        pip3 install gdown
-
-    - name: تجهيز الخلفية والتوقيت
-      id: timing
-      run: |
-        # تحميل الخلفية الرئيسية
-        gdown --id 1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ -O background.png || ffmpeg -f lavfi -i color=c=black:s=1920x1080 -frames:v 1 background.png
-        
-        # إنشاء فيديو احتياطي
-        ffmpeg -f lavfi -i testsrc=size=640x480:rate=30:duration=30 \
-               -f lavfi -i sine=frequency=1000:duration=30 \
-               -c:v libx264 -c:a aac -t 30 placeholder.mp4
-        
-        # حساب وقت النهاية
-        END_TIME=$(($(date +%s) + (${{ github.event.inputs.stream_duration }} * 3600)))
-        echo "END_TIME=$END_TIME" >> $GITHUB_ENV
-
-    - name: تحميل الفيديوهات من Google Drive
-      run: |
-        # دالة لاستخراج File ID من رابط Google Drive
-        extract_file_id() {
-          local url="$1"
-          if [[ $url =~ /d/([a-zA-Z0-9_-]+) ]]; then
-            echo "${BASH_REMATCH[1]}"
-          elif [[ $url =~ id=([a-zA-Z0-9_-]+) ]]; then
-            echo "${BASH_REMATCH[1]}"
-          else
-            echo ""
-          fi
-        }
-
-        # تحميل جميع الفيديوهات
-        mkdir -p videos
-        
-        for i in {1..5}; do
-          url_var="url$i"
-          url="${!url_var}"
-          file_id=$(extract_file_id "$url")
-          
-          echo "🔄 تحميل video$i من: $url"
-          
-          if [[ -n "$file_id" ]]; then
-            if gdown --id "$file_id" -O "videos/video$i.mp4"; then
-              echo "✅ تم تحميل video$i.mp4"
-              
-              # التحقق من حجم الملف
-              filesize=$(stat -c%s "videos/video$i.mp4")
-              if [[ $filesize -lt 100000 ]]; then
-                echo "⚠️ الملف صغير جداً، استخدام الفيديو الاحتياطي"
-                cp placeholder.mp4 "videos/video$i.mp4"
-              fi
-            else
-              echo "⚠️ فشل التحميل، استخدام الفيديو الاحتياطي"
-              cp placeholder.mp4 "videos/video$i.mp4"
-            fi
-          else
-            echo "⚠️ رابط غير صالح"
-            cp placeholder.mp4 "videos/video$i.mp4"
-          fi
-        done
-
-    - name: إنشاء فيديو مركب
-      run: |
-        # إنشاء فيديو واحد يحتوي على جميع الشاشات
-        echo "🎬 إنشاء فيديو مركب من 5 شاشات..."
-        
-        # نص الشريط المتحرك
-        BOTTOM_TEXT="${{ github.event.inputs.bottom_text }}"
-        
-        # فلتر دمج الشاشات
-        FILTER="[0:v]scale=1920:1080[bg]; \
-                [1:v]scale=960:540[topL]; \
-                [2:v]scale=960:540[topR]; \
-                [3:v]scale=640:540[bottomL]; \
-                [4:v]scale=640:540[bottomM]; \
-                [5:v]scale=640:540[bottomR]; \
-                [bg][topL]overlay=0:0[bg1]; \
-                [bg1][topR]overlay=960:0[bg2]; \
-                [bg2][bottomL]overlay=0:540[bg3]; \
-                [bg3][bottomM]overlay=640:540[bg4]; \
-                [bg4][bottomR]overlay=1280:540[base]; \
-                [base]drawtext=text='${BOTTOM_TEXT}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:x=w-150*t:y=h-80:box=1:boxcolor=black@0.6:boxborderw=10[out]"
-        
-        # إنشاء فيديو واحد لمدة 30 ثانية (أو أطول مدة فيديو)
-        ffmpeg -i background.png \
-               -i videos/video1.mp4 \
-               -i videos/video2.mp4 \
-               -i videos/video3.mp4 \
-               -i videos/video4.mp4 \
-               -i videos/video5.mp4 \
-               -filter_complex "$FILTER" -map "[out]" -map 1:a? \
-               -c:v libx264 -preset medium -b:v 2500k \
-               -c:a aac -b:a 128k -ar 44100 \
-               -t 30 -y combined.mp4
-        
-        echo "✅ تم إنشاء الفيديو المركب"
-
-    - name: بدء البث المباشر
-      run: |
-        END_TIME="${{ env.END_TIME }}"
-        
-        echo "🔄 بدء البث المباشر حتى $(date -d @$END_TIME)"
-        echo "🚀 عنوان البث: ${{ env.STREAM_URL }}/${{ secrets.STREAM_KEY }}"
-        
-        while [ $(date +%s) -lt $END_TIME ]; do
-          REMAINING=$(( END_TIME - $(date +%s) ))
-          
-          echo "🚀 دورة بث جديدة - الوقت المتبقي: $REMAINING ثانية"
-          
-          # البث باستخدام نفس طريقة الـ YML الناجح
-          ffmpeg -hide_banner -loglevel warning -re -stream_loop -1 \
-            -i combined.mp4 \
-            -c:v libx264 -preset ultrafast -tune zerolatency \
-            -b:v 2500k -maxrate 2500k -bufsize 5000k \
-            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
-            -f flv -t $REMAINING \
-            "${{ env.STREAM_URL }}/${{ secrets.STREAM_KEY }}" || \
-            (echo "⚠️ Connection lost. Retrying in 5s..." && sleep 5)
-        done
-        
-        echo "✅ انتهى وقت البث المقرر"
