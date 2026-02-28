@@ -1,0 +1,76 @@
+name: Render Pro Live Dashboard Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      green_zone_link:
+        description: 'Link for Top Left (Green)'
+        required: true
+        default: 'https://www.youtube.com/watch?v=bNyUyrR0PHo'
+      red_zone_link:
+        description: 'Link for Top Right (Red)'
+        required: true
+      yellow_zone_link:
+        description: 'Link for Middle Left (Yellow)'
+        required: true
+      blue_zone_link:
+        description: 'Link for Middle Center (Blue)'
+        required: true
+      grey_zone_link:
+        description: 'Link for Middle Right (Grey)'
+        required: true
+      bottom_text:
+        description: 'Arabic Text for Black Zone'
+        required: true
+        default: 'عاجل - تغطية حصرية مباشرة لمستجدات الأحداث الإقليمية والدولية'
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-arabeyes
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+
+      - name: Download Background from Google Drive
+        run: |
+          # استخراج الملف من رابط جوجل درايف باستخدام المعرف الخاص به
+          FILE_ID="1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ"
+          curl -L "https://docs.google.com/uc?export=download&id=${FILE_ID}" -o background.png
+
+      - name: Extract Live Links via yt-dlp
+        id: links
+        run: |
+          echo "L1=$(yt-dlp -g -f b ${{ github.event.inputs.green_zone_link }})" >> $GITHUB_ENV
+          echo "L2=$(yt-dlp -g -f b ${{ github.event.inputs.red_zone_link }})" >> $GITHUB_ENV
+          echo "L3=$(yt-dlp -g -f b ${{ github.event.inputs.yellow_zone_link }})" >> $GITHUB_ENV
+          echo "L4=$(yt-dlp -g -f b ${{ github.event.inputs.blue_zone_link }})" >> $GITHUB_ENV
+          echo "L5=$(yt-dlp -g -f b ${{ github.event.inputs.grey_zone_link }})" >> $GITHUB_ENV
+
+      - name: Render Professional Dashboard
+        run: |
+          ffmpeg -i background.png \
+          -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$L1" \
+          -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$L2" \
+          -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$L3" \
+          -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$L4" \
+          -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -i "$L5" \
+          -filter_complex \
+          "[1:v]scale=1920:1000[green]; \
+           [2:v]scale=1920:1000[red]; \
+           [3:v]scale=1520:940[yellow]; \
+           [4:v]scale=1540:940[blue]; \
+           [5:v]scale=780:940[grey]; \
+           [0:v][green]overlay=x=0:y=0[b1]; \
+           [b1][red]overlay=x=1920:y=0[b2]; \
+           [b2][yellow]overlay=x=0:y=1000[b3]; \
+           [b3][blue]overlay=x=1520:y=1000[b4]; \
+           [b4][grey]overlay=x=3060:y=1000[b5]; \
+           [b5]drawtext=text='${{ github.event.inputs.bottom_text }}':fontcolor=white:fontsize=110:borderw=3:bordercolor=red:y=2050+((2160-2050-th)/2):x=-tw+mod(t*220\,w+tw)[out]" \
+          -map "[out]" -c:v libx264 -preset fast -t 45 final_
