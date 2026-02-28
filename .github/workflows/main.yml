@@ -1,0 +1,166 @@
+name: 📡 IRAN NOW - Ultimate Manual Stream
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'رابط فيديو 1 من Google Drive', required: true }
+      url2: { description: 'رابط فيديو 2 من Google Drive', required: true }
+      url3: { description: 'رابط فيديو 3 من Google Drive', required: true }
+      url4: { description: 'رابط فيديو 4 من Google Drive', required: true }
+      url5: { description: 'رابط فيديو 5 من Google Drive', required: true }
+      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: تثبيت المتطلبات الكاملة
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip python3-venv
+        
+        # تثبيت gdown لتحميل من Google Drive
+        pip3 install --upgrade pip
+        pip3 install gdown yt-dlp
+
+    - name: تجهيز الخلفية والتوقيت
+      id: timing
+      run: |
+        # تحميل الخلفية الرئيسية
+        gdown --id 1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ -O background.png || ffmpeg -f lavfi -i color=c=black:s=1920x1080 -frames:v 1 background.png
+        
+        # التأكد من وجود الصورة الاحتياطية
+        if [[ ! -f "background2026.png" ]]; then
+          echo "⚠️ الصورة الاحتياطية غير موجودة، سيتم إنشاء صورة سوداء"
+          ffmpeg -f lavfi -i color=c=black:s=640x480 -frames:v 1 background2026.png
+        else
+          # تحويل الصورة إلى الحجم المناسب
+          ffmpeg -i background2026.png -vf "scale=640:480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2" -y background2026_fixed.png
+          mv background2026_fixed.png background2026.png
+        fi
+        
+        echo "end_time=$(($(date +%s) + (${{ github.event.inputs.stream_duration }} * 3600)))" >> $GITHUB_OUTPUT
+
+    - name: تحميل الفيديوهات من Google Drive
+      run: |
+        # دالة لاستخراج File ID من رابط Google Drive
+        extract_file_id() {
+          local url="$1"
+          # استخراج ID من الرابط
+          if [[ $url =~ /d/([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+          elif [[ $url =~ id=([a-zA-Z0-9_-]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+          else
+            echo ""
+          fi
+        }
+
+        # دالة لتحميل الفيديو
+        download_video() {
+          local url="$1"
+          local output="$2"
+          local file_id=$(extract_file_id "$url")
+          
+          if [[ -n "$file_id" ]]; then
+            echo "🔄 تحميل فيديو من Google Drive: $file_id"
+            gdown --id "$file_id" -O "$output" || {
+              echo "⚠️ فشل التحميل، استخدام الصورة الاحتياطية"
+              echo "background2026.png" > "${output}.fallback"
+            }
+          else
+            echo "⚠️ رابط غير صالح: $url"
+            echo "background2026.png" > "${output}.fallback"
+          fi
+        }
+
+        # تحميل جميع الفيديوهات
+        mkdir -p videos
+        
+        download_video "${{ github.event.inputs.url1 }}" "videos/video1.mp4"
+        download_video "${{ github.event.inputs.url2 }}" "videos/video2.mp4"
+        download_video "${{ github.event.inputs.url3 }}" "videos/video3.mp4"
+        download_video "${{ github.event.inputs.url4 }}" "videos/video4.mp4"
+        download_video "${{ github.event.inputs.url5 }}" "videos/video5.mp4"
+
+    - name: بدء البث المباشر
+      run: |
+        # دالة للتحقق من وجود الفيديو
+        get_video_path() {
+          local num="$1"
+          if [[ -f "videos/video${num}.mp4" ]]; then
+            echo "videos/video${num}.mp4"
+          elif [[ -f "videos/video${num}.mp4.fallback" ]]; then
+            echo "background2026.png"
+          else
+            echo "background2026.png"
+          fi
+        }
+
+        # الحصول على مسارات الفيديوهات
+        VIDEO1=$(get_video_path 1)
+        VIDEO2=$(get_video_path 2)
+        VIDEO3=$(get_video_path 3)
+        VIDEO4=$(get_video_path 4)
+        VIDEO5=$(get_video_path 5)
+
+        echo "VIDEO1: $VIDEO1"
+        echo "VIDEO2: $VIDEO2"
+        echo "VIDEO3: $VIDEO3"
+        echo "VIDEO4: $VIDEO4"
+        echo "VIDEO5: $VIDEO5"
+
+        # نص الشريط المتحرك
+        BOTTOM_TEXT="${{ github.event.inputs.bottom_text }}"
+        
+        # فلتر دمج الشاشات
+        FILTER="[1:v]scale=960:540,setsar=1[v1]; \
+                [2:v]scale=960:540,setsar=1[v2]; \
+                [3:v]scale=640:540,setsar=1,format=yuv420p[v3]; \
+                [4:v]scale=640:540,setsar=1,format=yuv420p[v4]; \
+                [5:v]scale=640:540,setsar=1,format=yuv420p[v5]; \
+                [0:v]scale=1920:1080,format=yuv420p[bg]; \
+                [bg][v1]overlay=0:0[b1]; \
+                [b1][v2]overlay=960:0[b2]; \
+                [b2][v3]overlay=0:540[b3]; \
+                [b3][v4]overlay=640:540[b4]; \
+                [b4][v5]overlay=1280:540[base]; \
+                [base]drawtext=text='${BOTTOM_TEXT}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:x=w-150*t:y=h-80:box=1:boxcolor=black@0.6:boxborderw=10,format=yuv420p[out]"
+
+        # بدء البث مع إعادة المحاولة التلقائية
+        echo "🔄 بدء البث المباشر حتى $(date -d @${{ steps.timing.outputs.end_time }})"
+        
+        while [ $(date +%s) -lt ${{ steps.timing.outputs.end_time }} ]; do
+          echo "🚀 بدء دورة بث جديدة في $(date)"
+          
+          # تشغيل الفيديوهات بشكل متكرر
+          ffmpeg -re -stream_loop -1 -i background.png \
+            -stream_loop -1 -i "$VIDEO1" \
+            -stream_loop -1 -i "$VIDEO2" \
+            -stream_loop -1 -i "$VIDEO3" \
+            -stream_loop -1 -i "$VIDEO4" \
+            -stream_loop -1 -i "$VIDEO5" \
+            -filter_complex "$FILTER" -map "[out]" -map 1:a? \
+            -c:v libx264 -preset ultrafast -tune zerolatency -b:v 2500k -maxrate 2500k -bufsize 5000k \
+            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "rtmp://a.rtmp.youtube.com/live2?key=$STREAM_KEY" 2>ffmpeg_error.log || {
+            
+            # التحقق من نوع الخطأ
+            if grep -q "Invalid argument" ffmpeg_error.log; then
+              echo "⚠️ تحذير بسيط في الفلتر - يتم تجاهله"
+            else
+              echo "❌ خطأ جدي في البث:"
+              cat ffmpeg_error.log
+            fi
+          }
+          
+          echo "🔄 دورة البث انتهت، انتظار 5 ثواني قبل إعادة المحاولة..."
+          sleep 5
+        done
+        
+        echo "✅ انتهى وقت البث المقرر"
