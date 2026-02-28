@@ -1,0 +1,181 @@
+name: 📡 IRAN NOW - Ultimate Manual Stream
+on:
+  workflow_dispatch:
+    inputs:
+      url1: { description: 'رابط فيديو 1', required: true }
+      url2: { description: 'رابط فيديو 2', required: true }
+      url3: { description: 'رابط فيديو 3', required: true }
+      url4: { description: 'رابط فيديو 4', required: true }
+      url5: { description: 'رابط فيديو 5', required: true }
+      bottom_text: { description: 'نص الشريط', required: false, default: 'بث مباشر 24/7' }
+      stream_duration: { description: 'المدة بالساعات', required: false, default: '5' }
+
+env:
+  STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: تثبيت المتطلبات الكاملة
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip python3-venv
+        
+        # تثبيت مكتبات النظام
+        sudo apt-get install -y \
+          curl \
+          wget \
+          libcurl4-openssl-dev \
+          libssl-dev \
+          python3-dev \
+          build-essential \
+          pkg-config
+        
+        # تحديث pip وتثبيت الأدوات
+        pip3 install --upgrade pip
+        pip3 install --upgrade curl-cffi
+        pip3 install --upgrade "yt-dlp[default,curl-cffi]" brotli certifi gdown
+        
+        # إنشاء فيديو احتياطي (كبديل أخير)
+        ffmpeg -f lavfi -i testsrc=size=640x480:rate=30:duration=300 \
+               -f lavfi -i sine=frequency=1000:duration=300 \
+               -c:v libx264 -c:a aac -t 300 placeholder.mp4 2>/dev/null || echo "تم إنشاء الفيديو الاحتياطي"
+
+    - name: تجهيز الخلفية والتوقيت
+      id: timing
+      run: |
+        # تحميل الخلفية الرئيسية
+        gdown --id 1mcqB-MvngWziGqNPuRs9gO39XtdbddgJ -O background.png || ffmpeg -f lavfi -i color=c=black:s=1920x1080 -frames:v 1 background.png
+        
+        # التأكد من وجود الصورة الاحتياطية
+        if [[ ! -f "background2026.png" ]]; then
+          echo "⚠️ الصورة الاحتياطية غير موجودة، سيتم إنشاء صورة سوداء"
+          ffmpeg -f lavfi -i color=c=black:s=640x480 -frames:v 1 background2026.png
+        fi
+        
+        echo "end_time=$(($(date +%s) + (${{ github.event.inputs.stream_duration }} * 3600)))" >> $GITHUB_OUTPUT
+
+    - name: بدء البث المباشر
+      run: |
+        # دالة استخراج الروابط
+        extract_url() {
+          local url="$1"
+          local output=""
+          
+          echo "🔄 محاولة استخراج: $url" >&2
+          
+          # محاولة مع yt-dlp
+          for impersonate in "chrome:windows-10" "firefox:windows-10" "safari:macos-11"; do
+            output=$(yt-dlp --quiet --no-warnings --get-url \
+              --impersonate "$impersonate" \
+              --extractor-args "generic:impersonate=$impersonate" \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+              --referer "https://www.google.com/" \
+              "$url" 2>/dev/null | head -1)
+            
+            if [[ -n "$output" ]]; then
+              echo "✅ نجح مع impersonate: $impersonate" >&2
+              echo "$output"
+              return 0
+            fi
+          done
+          
+          echo "⚠️ فشل استخراج $url، سيتم استخدام الصورة الاحتياطية" >&2
+          echo "background2026.png"
+        }
+
+        # دالة لتحضير مدخل ffmpeg
+        prepare_input() {
+          local url="$1"
+          local index="$2"
+          
+          if [[ "$url" == "background2026.png" ]]; then
+            # صورة ثابتة - نحولها إلى فيديو loop
+            echo "-stream_loop -1 -i \"$url\""
+          elif [[ "$url" == "placeholder.mp4" ]]; then
+            # ملف فيديو محلي
+            echo "-stream_loop -1 -i \"$url\""
+          else
+            # رابط خارجي - يحتاج خيارات إعادة الاتصال
+            echo "-reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -rw_timeout 30000000 -i \"$url\""
+          fi
+        }
+
+        # استخراج جميع الروابط
+        echo "🔄 جاري استخراج روابط الفيديو..."
+        
+        URL1="${{ github.event.inputs.url1 }}"
+        URL2="${{ github.event.inputs.url2 }}"
+        URL3="${{ github.event.inputs.url3 }}"
+        URL4="${{ github.event.inputs.url4 }}"
+        URL5="${{ github.event.inputs.url5 }}"
+        
+        V1=$(extract_url "$URL1")
+        V2=$(extract_url "$URL2")
+        V3=$(extract_url "$URL3")
+        V4=$(extract_url "$URL4")
+        V5=$(extract_url "$URL5")
+        
+        echo "V1: $V1"
+        echo "V2: $V2"
+        echo "V3: $V3"
+        echo "V4: $V4"
+        echo "V5: $V5"
+
+        # نص الشريط المتحرك
+        BOTTOM_TEXT="${{ github.event.inputs.bottom_text }}"
+        
+        # فلتر دمج الشاشات
+        FILTER="[1:v]scale=960:540,setsar=1[v1]; \
+                [2:v]scale=960:540,setsar=1[v2]; \
+                [3:v]scale=640:540,setsar=1[v3]; \
+                [4:v]scale=640:540,setsar=1[v4]; \
+                [5:v]scale=640:540,setsar=1[v5]; \
+                [0:v]scale=1920:1080[bg]; \
+                [bg][v1]overlay=0:0[b1]; \
+                [b1][v2]overlay=960:0[b2]; \
+                [b2][v3]overlay=0:540[b3]; \
+                [b3][v4]overlay=640:540[b4]; \
+                [b4][v5]overlay=1280:540[base]; \
+                [base]drawtext=text='${BOTTOM_TEXT}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=60:x=w-150*t:y=h-80:box=1:boxcolor=black@0.6:boxborderw=10[out]"
+
+        # بدء البث
+        echo "🔄 بدء البث المباشر حتى $(date -d @${{ steps.timing.outputs.end_time }})"
+        
+        while [ $(date +%s) -lt ${{ steps.timing.outputs.end_time }} ]; do
+          echo "🚀 بدء دورة بث جديدة في $(date)"
+          
+          # تحضير مدخلات ffmpeg بشكل ديناميكي
+          INPUT1=$(prepare_input "$V1" 1)
+          INPUT2=$(prepare_input "$V2" 2)
+          INPUT3=$(prepare_input "$V3" 3)
+          INPUT4=$(prepare_input "$V4" 4)
+          INPUT5=$(prepare_input "$V5" 5)
+          
+          # تنفيذ ffmpeg
+          eval ffmpeg -re -stream_loop -1 -i background.png \
+            $INPUT1 $INPUT2 $INPUT3 $INPUT4 $INPUT5 \
+            -filter_complex "$FILTER" -map "[out]" -map 1:a \
+            -c:v libx264 -preset ultrafast -tune zerolatency -b:v 2500k -maxrate 2500k -bufsize 5000k \
+            -pix_fmt yuv420p -g 60 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
+          
+          # إذا فشل البث، انتظر وحاول مرة أخرى
+          echo "⚠️ توقف البث، إعادة المحاولة بعد 5 ثواني..."
+          sleep 5
+          
+          # إعادة استخراج الروابط الفاشلة فقط
+          if [[ "$V2" == "background2026.png" ]]; then
+            echo "🔄 إعادة محاولة استخراج الرابط 2..."
+            V2=$(extract_url "$URL2")
+          fi
+          if [[ "$V3" == "background2026.png" ]]; then
+            echo "🔄 إعادة محاولة استخراج الرابط 3..."
+            V3=$(extract_url "$URL3")
+          fi
+        done
+        
+        echo "✅ انتهى وقت البث المقرر"
