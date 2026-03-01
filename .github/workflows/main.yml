@@ -1,0 +1,259 @@
+name: Ultimate Stream 2026
+on:
+  workflow_dispatch:
+    inputs:
+      url1:
+        description: 'Video 1 (Green)'
+        required: true
+      url2:
+        description: 'Video 2 (Red)'
+        required: true
+      url3:
+        description: 'Video 3 (Blue - Main Audio)'
+        required: true
+      bottom_text:
+        description: 'Bottom Ticker Text'
+        required: false
+        default: 'LIVE - Continuous Coverage'
+      stream_duration:
+        description: 'Duration (hours)'
+        required: false
+        default: '6'
+      background_image:
+        description: 'Background Image URL (optional)'
+        required: false
+        default: 'background_v5.png'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 432  # 7.2 hours max (6 hours + buffer)
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ffmpeg \
+            fonts-dejavu-core \
+            python3-pip \
+            python3-setuptools \
+            wget \
+            curl
+          pip3 install --upgrade gdown
+
+      - name: Create Working Directory
+        run: |
+          mkdir -p videos
+          mkdir -p logs
+
+      - name: Download Videos (Optional)
+        run: |
+          extract_id() {
+            echo "$1" | grep -oE '(/d/|id=)([a-zA-Z0-9_-]+)' | cut -d'/' -f2 | cut -d'=' -f2
+          }
+          
+          download_video() {
+            local url=$1
+            local output=$2
+            local video_num=$3
+            
+            # Skip if URL is empty
+            if [ -z "$url" ]; then
+              echo "⚠️ Video $video_num: No URL provided - will show background only"
+              return 1
+            fi
+            
+            # Extract Google Drive ID
+            ID=$(extract_id "$url")
+            
+            if [ -n "$ID" ]; then
+              echo "📥 Video $video_num: Downloading from Google Drive (ID: $ID)"
+              if gdown --id "$ID" -O "$output" --fuzzy --quiet; then
+                if [ -s "$output" ]; then
+                  echo "✅ Video $video_num: Downloaded successfully"
+                  echo "video${video_num}_available=true" >> $GITHUB_ENV
+                  return 0
+                fi
+              fi
+            else
+              echo "📥 Video $video_num: Attempting direct download"
+              if wget -O "$output" "$url" 2>/dev/null && [ -s "$output" ]; then
+                echo "✅ Video $video_num: Downloaded successfully"
+                echo "video${video_num}_available=true" >> $GITHUB_ENV
+                return 0
+              fi
+            fi
+            
+            echo "⚠️ Video $video_num: Download failed - will show background only"
+            echo "video${video_num}_available=false" >> $GITHUB_ENV
+            return 1
+          }
+          
+          # Download all videos in parallel
+          download_video "${{ github.event.inputs.url1 }}" "videos/video1.mp4" 1 &
+          pid1=$!
+          download_video "${{ github.event.inputs.url2 }}" "videos/video2.mp4" 2 &
+          pid2=$!
+          download_video "${{ github.event.inputs.url3 }}" "videos/video3.mp4" 3 &
+          pid3=$!
+          
+          wait $pid1 $pid2 $pid3
+          echo "✅ Download process completed"
+
+      - name: Validate Background Image
+        run: |
+          BG_IMAGE="${{ github.event.inputs.background_image }}"
+          if [ -f "$BG_IMAGE" ]; then
+            echo "✅ Using local background: $BG_IMAGE"
+            cp "$BG_IMAGE" "background.png"
+          elif [[ "$BG_IMAGE" =~ ^https?:// ]]; then
+            echo "📥 Downloading background from URL"
+            wget -O "background.png" "$BG_IMAGE" || {
+              echo "⚠️ Background download failed, checking for local files"
+              find . -maxdepth 1 -name "*.png" | head -1 | xargs -r cp {} background.png || true
+            }
+          else
+            # Try to find any PNG file
+            BG_FILE=$(find . -maxdepth 1 -name "*.png" | head -1)
+            if [ -n "$BG_FILE" ]; then
+              cp "$BG_FILE" "background.png"
+              echo "✅ Using found background: $BG_FILE"
+            else
+              echo "⚠️ No background found, creating default gradient"
+              ffmpeg -f lavfi -i "gradients=s=1920x1080:c0=black:c1=darkblue" -frames:v 1 "background.png" -y > /dev/null 2>&1
+            fi
+          fi
+
+      - name: Prepare Stream Command
+        id: prepare
+        run: |
+          # Sanitize text for drawtext filter
+          BOTTOM_TEXT='${{ github.event.inputs.bottom_text }}'
+          BOTTOM_TEXT=$(echo "$BOTTOM_TEXT" | sed 's/[\\:]/\\&/g' | sed "s/'/\\\\'/g")
+          
+          # Calculate duration in seconds
+          DURATION_SEC=$(( ${{ github.event.inputs.stream_duration }} * 3600 ))
+          echo "duration=$DURATION_SEC" >> $GITHUB_OUTPUT
+          echo "text=$BOTTOM_TEXT" >> $GITHUB_OUTPUT
+          
+          # Build dynamic filter complex based on available videos
+          FILTER_COMPLEX="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[bg];"
+          
+          INPUTS=""
+          MAPS=""
+          
+          # Add video 1 if available
+          if [ "${{ env.video1_available }}" == "true" ] && [ -f "videos/video1.mp4" ]; then
+            echo "✅ Video 1 available - adding to layout"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[1:v]scale=845:475:force_original_aspect_ratio=increase,crop=845:475[v1];"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg][v1]overlay=0:0[bg1];"
+            INPUTS="-re -stream_loop -1 -i videos/video1.mp4 "
+            MAPS="${MAPS}[bg1]"
+          else
+            echo "ℹ️ Video 1 not available - showing background only"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg]null[bg1];"
+            MAPS="${MAPS}[bg]"
+          fi
+          
+          # Add video 2 if available
+          INPUT_COUNT=1
+          if [ "${{ env.video2_available }}" == "true" ] && [ -f "videos/video2.mp4" ]; then
+            echo "✅ Video 2 available - adding to layout"
+            INPUT_COUNT=$((INPUT_COUNT + 1))
+            FILTER_COMPLEX="${FILTER_COMPLEX}[${INPUT_COUNT}:v]scale=845:475:force_original_aspect_ratio=increase,crop=845:475[v2];"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg1][v2]overlay=0:475[bg2];"
+            INPUTS="${INPUTS} -re -stream_loop -1 -i videos/video2.mp4"
+            MAPS="${MAPS}[bg2]"
+          else
+            echo "ℹ️ Video 2 not available - showing background only"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg1]null[bg2];"
+            MAPS="${MAPS}[bg1]"
+          fi
+          
+          # Add video 3 if available
+          if [ "${{ env.video3_available }}" == "true" ] && [ -f "videos/video3.mp4" ]; then
+            echo "✅ Video 3 available - adding to layout"
+            INPUT_COUNT=$((INPUT_COUNT + 1))
+            FILTER_COMPLEX="${FILTER_COMPLEX}[${INPUT_COUNT}:v]scale=1075:950:force_original_aspect_ratio=decrease,pad=1075:950:(ow-iw)/2:(oh-ih)/2[v3];"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg2][v3]overlay=845:0[bg3];"
+            INPUTS="${INPUTS} -re -stream_loop -1 -i videos/video3.mp4"
+            MAPS="${MAPS}[bg3]"
+          else
+            echo "ℹ️ Video 3 not available - showing background only"
+            FILTER_COMPLEX="${FILTER_COMPLEX}[bg2]null[bg3];"
+            MAPS="${MAPS}[bg2]"
+          fi
+          
+          # Add text overlay
+          FILTER_COMPLEX="${FILTER_COMPLEX}[${MAPS##*[}]drawtext=text='$BOTTOM_TEXT':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=65:x=w-mod(5*t\,w+tw):y=h-85:shadowcolor=black:shadowx=2:shadowy=2[v_out]"
+          
+          echo "filter_complex=$FILTER_COMPLEX" >> $GITHUB_OUTPUT
+          echo "inputs=$INPUTS" >> $GITHUB_OUTPUT
+          
+          # Log configuration
+          echo "⚙️ Configuration:"
+          echo "   Duration: $DURATION_SEC seconds"
+          echo "   Bottom Text: $BOTTOM_TEXT"
+          echo "   Video 1 Available: ${{ env.video1_available }}"
+          echo "   Video 2 Available: ${{ env.video2_available }}"
+          echo "   Video 3 Available: ${{ env.video3_available }}"
+
+      - name: Start Streaming
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          # Validate stream key
+          if [ -z "$STREAM_KEY" ]; then
+            echo "❌ Error: YOUTUBE_STREAM_KEY secret is not set"
+            exit 1
+          fi
+          
+          echo "🚀 Starting stream for ${{ github.event.inputs.stream_duration }} hours"
+          
+          # Build audio inputs
+          if [ "${{ env.video3_available }}" == "true" ] && [ -f "videos/video3.mp4" ]; then
+            # Use audio from video 3 if available
+            AUDIO_MAP="-map 3:a"
+            echo "🔊 Using audio from Video 3 (Blue)"
+          else
+            # Use silent audio
+            AUDIO_MAP="-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -map 4:a"
+            echo "🔇 No audio source available - using silent audio"
+          fi
+          
+          # Construct and run FFmpeg command
+          ffmpeg -hide_banner -loglevel warning \
+            -re -loop 1 -framerate 25 -i "background.png" \
+            ${{ steps.prepare.outputs.inputs }} \
+            $([ "${{ env.video3_available }}" != "true" ] && echo "-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100") \
+            -filter_complex "${{ steps.prepare.outputs.filter_complex }}" \
+            -map "[v_out]" \
+            $AUDIO_MAP \
+            -c:v libx264 -preset veryfast -tune zerolatency \
+            -b:v 6000k -maxrate 8000k -bufsize 12000k \
+            -pix_fmt yuv420p -g 50 -keyint_min 50 \
+            -c:a aac -b:a 128k -ar 44100 \
+            -f flv -t ${{ steps.prepare.outputs.duration }} \
+            "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY" 2>&1 | tee logs/ffmpeg.log
+          
+          # Check exit status
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Stream completed successfully"
+          else
+            echo "❌ Stream failed with exit code: $EXIT_CODE"
+            echo "📝 Check logs/ffmpeg.log for details"
+            exit $EXIT_CODE
+          fi
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-logs
+          path: logs/
+          retention-days: 7
