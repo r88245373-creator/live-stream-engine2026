@@ -1,0 +1,39 @@
+name: 24/7 CapCut Professional Stream
+on:
+  schedule:
+    - cron: '0 */6 * * *' # إعادة تشغيل تلقائية كل 6 ساعات لضمان الاستمرارية
+  workflow_dispatch: # تشغيل يدوي بنقرة واحدة
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools (FFmpeg & gdown)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install gdown
+
+      - name: Download & Stream from Google Drive
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+          # الـ ID الجديد الذي زودتني به
+          VIDEO_ID: "1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW"
+        run: |
+          # 1. تحميل الفيديو من جوجل درايف باستخدام الـ ID الجديد
+          # ملاحظة: تأكد أن الملف "عام" (Anyone with the link) على درايف
+          gdown --id "$VIDEO_ID" -O final_video.mp4
+
+          # 2. التحقق من نجاح التحميل
+          if [ ! -s final_video.mp4 ]; then
+            echo "خطأ: لم يتم تحميل الفيديو بشكل صحيح، تأكد من صلاحيات الرابط في درايف"
+            exit 1
+          fi
+
+          # 3. إطلاق البث المباشر (تكرار لا نهائي)
+          # الإعدادات -c copy تعني استهلاك صفر معالج وحفاظ كامل على جودة CapCut
+          ffmpeg -re -stream_loop -1 -i final_video.mp4 \
+            -c copy -f flv "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
