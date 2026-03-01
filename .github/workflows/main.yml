@@ -1,0 +1,31 @@
+- name: Start Stream (Blue Zone Audio Priority)
+      env:
+        S_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+      run: |
+        DURATION_SEC=$(( ${{ github.event.inputs.stream_duration }} * 3600 ))
+        
+        ffmpeg -re -loop 1 -framerate 25 -i "background v5.png" \
+               -re -stream_loop -1 -i "videos/video1.mp4" \
+               -re -stream_loop -1 -i "videos/video2.mp4" \
+               -re -stream_loop -1 -i "videos/video3.mp4" \
+               -f lavfi -re -i anullsrc=channel_layout=stereo:sample_rate=44100 \
+               -filter_complex " \
+                [0:v]scale=2560:1440[bg]; \
+                [1:v]scale=850:480:force_original_aspect_ratio=increase,crop=850:480[v1]; \
+                [2:v]scale=850:480:force_original_aspect_ratio=increase,crop=850:480[v2]; \
+                [3:v]scale=1710:960:force_original_aspect_ratio=decrease,pad=1710:960:(ow-iw)/2:(oh-ih)/2:black[v3]; \
+                [bg][v1]overlay=x=0:y=0[b1]; \
+                [b1][v2]overlay=x=0:y=480[b2]; \
+                [b2][v3]overlay=x=850:y=0[b3]; \
+                [b3]drawtext=text='${{ github.event.inputs.bottom_text }}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=80:y=h-110:x=w-mod(t*200\,w+tw)[v_out]; \
+                [4:a]volume=0.1[asilent]; \
+                [asilent]asplit=1[a_fallback]; \
+                [a_out]amix=inputs=1:duration=longest[final_audio]" \
+               -map "[v_out]" \
+               -map 3:a? -map "[final_audio]" -disposition:a:0 default \
+               -c:v libx264 -preset veryfast -tune zerolatency -threads 4 \
+               -b:v 12000k -maxrate 14000k -bufsize 24000k \
+               -pix_fmt yuv420p -g 50 \
+               -c:a aac -b:a 192k -ar 48000 \
+               -f flv -t $DURATION_SEC \
+               "rtmp://a.rtmp.youtube.com/live2/$S_KEY"
