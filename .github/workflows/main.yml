@@ -1,39 +1,4 @@
-name: Ultimate Stream 2026 - V5 Original Quality
-on:
-  workflow_dispatch:
-    inputs:
-      url1: { description: 'فيديو 1 (المنطقة الخضراء - ملء كامل)', required: true }
-      url2: { description: 'فيديو 2 (المنطقة الحمراء - ملء كامل)', required: true }
-      url3: { description: 'فيديو 3 (المنطقة الزرقاء - جودة أصلية)', required: true }
-      bottom_text: { description: 'نص الشريط المتحرك', required: false, default: 'بث مباشر - تغطية مستمرة' }
-      stream_duration: { description: 'المدة بالساعات', required: false, default: '6' }
-
-jobs:
-  stream:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
-
-    - name: Install Tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg fonts-dejavu-core python3-pip
-        pip3 install gdown
-
-    - name: Download Videos
-      run: |
-        extract_id() {
-          echo "$1" | sed -E 's/.*(\/d\/|id=)([a-zA-Z0-9_-]+).*/\2/'
-        }
-        mkdir -p videos
-        URLS=("${{ github.event.inputs.url1 }}" "${{ github.event.inputs.url2 }}" "${{ github.event.inputs.url3 }}")
-        for i in "${!URLS[@]}"; do
-          ID=$(extract_id "${URLS[$i]}")
-          gdown --id "$ID" -O "videos/video$((i+1)).mp4" || ffmpeg -f lavfi -i color=c=black:s=1280x720:d=1 -frames:v 1 "videos/video$((i+1)).mp4"
-        done
-
-    - name: Start Stream
+- name: Start Stream (Blue Zone Audio Priority)
       env:
         S_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
       run: |
@@ -53,11 +18,11 @@ jobs:
                 [b1][v2]overlay=x=0:y=480[b2]; \
                 [b2][v3]overlay=x=850:y=0[b3]; \
                 [b3]drawtext=text='${{ github.event.inputs.bottom_text }}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontcolor=white:fontsize=80:y=h-110:x=w-mod(t*200\,w+tw)[v_out]; \
-                [3:a]volume=1.2[main_audio]; \
                 [4:a]volume=0.1[asilent]; \
-                [main_audio][asilent]amix=inputs=2:duration=longest[a_out]" \
+                [asilent]asplit=1[a_fallback]; \
+                [a_out]amix=inputs=1:duration=longest[final_audio]" \
                -map "[v_out]" \
-               -map "[a_out]" \
+               -map 3:a? -map "[final_audio]" -disposition:a:0 default \
                -c:v libx264 -preset veryfast -tune zerolatency -threads 4 \
                -b:v 12000k -maxrate 14000k -bufsize 24000k \
                -pix_fmt yuv420p -g 50 \
