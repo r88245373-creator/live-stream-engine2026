@@ -1,0 +1,101 @@
+name: Ultimate Stream 2026
+on:
+  workflow_dispatch:
+    inputs:
+      url1:
+        description: 'Video 1 (Green)'
+        required: true
+      url2:
+        description: 'Video 2 (Red)'
+        required: true
+      url3:
+        description: 'Video 3 (Blue - Audio)'
+        required: true
+      bottom_text:
+        description: 'Ticker Text'
+        default: 'LIVE - Continuous Coverage'
+      stream_duration:
+        description: 'Hours'
+        default: '6'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 432
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg jq
+          pip3 install gdown
+          mkdir -p videos
+
+      - name: Download Videos
+        run: |
+          # وظيفة للتحميل واستخراج المعرف
+          dl_gdrive() {
+            ID=$(echo "$1" | grep -oE "[a-zA-Z0-9_-]{25,}" | head -1)
+            if [ -n "$ID" ]; then
+              gdown "https://drive.google.com/uc?id=$ID" -O "$2" --quiet || true
+            fi
+          }
+          dl_gdrive "${{ github.event.inputs.url1 }}" "videos/v1.mp4"
+          dl_gdrive "${{ github.event.inputs.url2 }}" "videos/v2.mp4"
+          dl_gdrive "${{ github.event.inputs.url3 }}" "videos/v3.mp4"
+
+      - name: Run Engine
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          # 1. إنشاء خلفية افتراضية
+          ffmpeg -f lavfi -i "color=c=black:s=1920x1080" -frames:v 1 background.png -y
+
+          # 2. بناء الأوامر ديناميكياً
+          INPUTS="-re -loop 1 -i background.png"
+          FILTER="[0:v]scale=1920:1080[bg];"
+          LAST_V="bg"
+          idx=1
+
+          # التحقق من الفيديو 1
+          if [ -s "videos/v1.mp4" ]; then
+            INPUTS="$INPUTS -re -stream_loop -1 -i videos/v1.mp4"
+            FILTER="${FILTER}[$idx:v]scale=845:475[v1];[$LAST_V][v1]overlay=0:0[ov1];"
+            LAST_V="ov1"
+            idx=$((idx+1))
+          fi
+
+          # التحقق من الفيديو 2
+          if [ -s "videos/v2.mp4" ]; then
+            INPUTS="$INPUTS -re -stream_loop -1 -i videos/v2.mp4"
+            FILTER="${FILTER}[$idx:v]scale=845:475[v2];[$LAST_V][v2]overlay=0:475[ov2];"
+            LAST_V="ov2"
+            idx=$((idx+1))
+          fi
+
+          # التحقق من الفيديو 3 (مصدر الصوت الرئيسي)
+          AUDIO_MAP=""
+          if [ -s "videos/v3.mp4" ]; then
+            INPUTS="$INPUTS -re -stream_loop -1 -i videos/v3.mp4"
+            FILTER="${FILTER}[$idx:v]scale=1075:950[v3];[$LAST_V][v3]overlay=845:0[ov3];"
+            LAST_V="ov3"
+            AUDIO_MAP="-map $idx:a" # الصوت من فيديو 3
+            idx=$((idx+1))
+          else
+            # إذا لم يوجد فيديو 3، نستخدم صوتاً صامتاً
+            INPUTS="$INPUTS -f lavfi -i anullsrc=cl=stereo:sr=44100"
+            AUDIO_MAP="-map $idx:a"
+            FILTER="${FILTER}[$LAST_V]null[ov3];"
+            LAST_V="ov3"
+          fi
+
+          # إضافة النص النهائي
+          FILTER="${FILTER}[$LAST_V]drawtext=text='${{ github.event.inputs.bottom_text }}':fontcolor=white:fontsize=60:x=w-mod(5*t\,w+tw):y=h-80[v_out]"
+
+          # 3. إرسال البث
+          ffmpeg -hide_banner -loglevel error $INPUTS \
+            -filter_complex "$FILTER" -map "[v_out]" $AUDIO_MAP \
+            -c:v libx264 -preset veryfast -b:v 4000k -pix_fmt yuv420p -g 50 \
+            -c:a aac -b:a 128k -ar 44100 -f flv \
+            -t $((${{ github.event.inputs.stream_duration }} * 3600)) \
+            "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
