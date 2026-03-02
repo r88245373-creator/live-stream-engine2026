@@ -1,0 +1,56 @@
+name: 24/7 CapCut Stream (gdown Version)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      video_link:
+        description: 'Google Drive Video URL'
+        required: true
+        default: 'https://drive.google.com/file/d/1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW/view'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools (FFmpeg & gdown)
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install gdown
+
+      - name: Download Video
+        env:
+          # Uses the link you paste or the default one
+          RAW_INPUT: ${{ github.event.inputs.video_link || '1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW' }}
+        run: |
+          # Extract ID from the link automatically
+          VIDEO_ID=$(echo "$RAW_INPUT" | sed -E 's/.*\/d\/([^/]+).*/\1/' | sed -E 's/.*id=([^&]+).*/\1/')
+          echo "Downloading Video ID: $VIDEO_ID"
+          
+          # gdown handles the large file 'Confirm' screen automatically
+          gdown --id "$VIDEO_ID" -O stream_file.mp4 --fuzzy
+
+      - name: Start Professional Stream
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          # Verification
+          if [ ! -s stream_file.mp4 ]; then
+            echo "Error: Download failed. Check if the link is 'Anyone with the link'."
+            exit 1
+          fi
+
+          # Stream Settings:
+          # -re (Real-time) | -stream_loop -1 (Infinite loop)
+          # -vcodec copy (0% CPU usage, original quality)
+          ffmpeg -re -stream_loop -1 -i stream_file.mp4 \
+            -vcodec copy -acodec copy -f flv \
+            "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f stream_file.mp4
