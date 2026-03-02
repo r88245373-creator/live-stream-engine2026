@@ -1,0 +1,52 @@
+name: 24/7 Professional Live Stream (No-Python)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      video_link:
+        description: 'Google Drive Video URL'
+        required: true
+        default: 'https://drive.google.com/file/d/1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW/view'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Download Video (Pure Bash)
+        env:
+          RAW_INPUT: ${{ github.event.inputs.video_link || '1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW' }}
+        run: |
+          # Extract ID using sed
+          VIDEO_ID=$(echo "$RAW_INPUT" | sed -E 's/.*\/d\/([^/]+).*/\1/' | sed -E 's/.*id=([^&]+).*/\1/')
+          
+          echo "Downloading Video ID: $VIDEO_ID"
+          
+          # Direct download using curl (handles Google Drive's confirmation cookie for large files)
+          CONFIRM=$(curl -sc /tmp/gcookie "https://drive.google.com/uc?export=download&id=${VIDEO_ID}" | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1/p')
+          curl -Lb /tmp/gcookie "https://drive.google.com/uc?export=download&confirm=${CONFIRM}&id=${VIDEO_ID}" -o stream_file.mp4
+
+      - name: Start Stream
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          if [ ! -s stream_file.mp4 ]; then
+            echo "Error: Download failed or file is empty."
+            exit 1
+          fi
+
+          ffmpeg -re -stream_loop -1 -i stream_file.mp4 \
+            -vcodec copy -acodec copy -f flv \
+            "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f stream_file.mp4
