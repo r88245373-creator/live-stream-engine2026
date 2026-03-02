@@ -1,0 +1,65 @@
+name: 24/7 Professional Live Stream (Optimized)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Restarts every 6 hours to stay within GitHub limits
+  workflow_dispatch:
+    inputs:
+      video_link:
+        description: 'Google Drive Video URL'
+        required: true
+        default: 'https://drive.google.com/file/d/1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW/view'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Performance: Cache Python and pip to speed up tool installation
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install gdown
+
+      # 2. Fast Download: Intelligent ID extraction and gdown optimization
+      - name: Download Video
+        env:
+          RAW_INPUT: ${{ github.event.inputs.video_link || '1uPIsRiVT8rzx5Qmtp7_Ccg8sZIi-ucjW' }}
+        run: |
+          # Regex to pull the ID from any standard Google Drive link
+          VIDEO_ID=$(echo "$RAW_INPUT" | sed -E 's/.*\/d\/([^/]+).*/\1/' | sed -E 's/.*id=([^&]+).*/\1/')
+          echo "Target Video ID: $VIDEO_ID"
+          
+          # Download with resumable capability
+          gdown --id "$VIDEO_ID" -O stream_file.mp4 --continue || exit 1
+
+      # 3. Pro Stream: Use Stream Copy for Zero Latency and Low CPU usage
+      - name: Start Professional Stream
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          if [ ! -s stream_file.mp4 ]; then echo "Error: File is empty or download failed!"; exit 1; fi
+
+          echo "Starting Stream to YouTube..."
+          
+          # FFmpeg Pro Settings:
+          # -re: Stream at native frame rate (essential for live)
+          # -stream_loop -1: Infinite loop
+          # -vcodec copy -acodec copy: Zero re-encoding (Instant, high quality, saves CPU)
+          # -f flv: The required format for YouTube RTMP
+          ffmpeg -re -stream_loop -1 -i stream_file.mp4 \
+            -vcodec copy -acodec copy -f flv \
+            "rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
+
+      # 4. Clean: Automatic file removal
+      - name: Cleanup
+        if: always()
+        run: rm -f stream_file.mp4
