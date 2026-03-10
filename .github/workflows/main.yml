@@ -1,0 +1,54 @@
+name: 24/7 Twitch Professional Stream
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Enter the Proton Drive video URL'
+        required: true
+        default: ''
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools (FFmpeg & yt-dlp)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          pip install yt-dlp
+
+      - name: Download & Stream from Proton Drive
+        env:
+          STREAM_KEY: ${{ secrets.TWITCH_STREAM_KEY }}
+        run: |
+          VIDEO_URL="${{ github.event.inputs.video_url }}"
+          
+          if [ -z "$VIDEO_URL" ]; then
+            echo "Error: video_url is empty!"
+            exit 1
+          fi
+
+          # Download video from Proton Drive using yt-dlp (handles Proton Drive better)
+          echo "Downloading video from $VIDEO_URL ..."
+          yt-dlp --verbose "$VIDEO_URL" -o "final_video.%(ext)s"
+
+          # Find the downloaded video file (extension might vary)
+          VIDEO_FILE=$(ls final_video.* | head -n 1)
+          
+          # Check if the video exists
+          if [ ! -s "$VIDEO_FILE" ]; then
+            echo "Error: Video download failed"
+            exit 1
+          fi
+
+          echo "Video downloaded successfully: $VIDEO_FILE ($(du -h $VIDEO_FILE | cut -f1))"
+
+          # Stream the video in a loop to Twitch
+          echo "Starting Twitch stream..."
+          ffmpeg -re -stream_loop -1 -i "$VIDEO_FILE" \
+            -c copy -f flv "rtmp://live.twitch.tv/app/$STREAM_KEY"
