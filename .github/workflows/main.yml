@@ -1,0 +1,56 @@
+name: 24/7 YouTube Stream
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id_1:
+        description: 'Video 1 Google Drive ID'
+        required: true
+      video_id_2:
+        description: 'Video 2 Google Drive ID'
+        required: true
+      video_id_3:
+        description: 'Video 3 Google Drive ID'
+        required: true
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 43200
+    
+    steps:
+      - name: ⚡ Fast Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
+          pip install -q gdown
+
+      - name: 📥 Quick Download
+        run: |
+          mkdir videos && cd videos
+          
+          # Parallel downloads
+          gdown --id "${{ inputs.video_id_1 }}" -O 1.mp4 &
+          gdown --id "${{ inputs.video_id_2 }}" -O 2.mp4 &
+          gdown --id "${{ inputs.video_id_3 }}" -O 3.mp4 &
+          wait
+          
+          # Create playlist
+          printf "file '1.mp4'\nfile '2.mp4'\nfile '3.mp4'" > playlist.txt
+
+      - name: 🔴 Stream (No Lag)
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          cd videos
+          
+          # Simple clean stream with sleep
+          while true; do
+            # Stream for 5 hours
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i playlist.txt \
+              -c copy -bufsize 8000k -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            
+            # 90 second sleep
+            echo "💤 Sleep 90s"
+            sleep 90
+          done
