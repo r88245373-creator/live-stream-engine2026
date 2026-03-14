@@ -1,0 +1,48 @@
+name: 🔴 YouTube 24/7 - INSTANT STREAM
+
+on:
+  workflow_dispatch:
+    inputs:
+      link1: { required: true }
+      link2: { required: true }
+      link3: { required: true }
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ⚡ Install
+        run: |
+          sudo apt-get install -y ffmpeg -qq
+          pip install -q gdown
+
+      - name: 📥 Download
+        run: |
+          gdown --id "${{ inputs.link1 }}" -O 1.mp4 &
+          gdown --id "${{ inputs.link2 }}" -O 2.mp4 &
+          gdown --id "${{ inputs.link3 }}" -O 3.mp4 &
+          wait
+
+      - name: 🔴 STREAM NOW (NO FIX NEEDED)
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          # Get FPS quickly
+          FPS=$(ffprobe -v error -select_streams v -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 1.mp4 | bc -l | awk '{printf "%.0f", $1}')
+          GOP=$((FPS * 2))
+          
+          echo "🎯 Streaming with FORCED keyframes every 2 seconds"
+          
+          # Create playlist
+          echo -e "file '1.mp4'\nfile '2.mp4'\nfile '3.mp4'" > list.txt
+          
+          # STREAM DIRECTLY with forced keyframes (NO RE-ENCODING!)
+          while true; do
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i list.txt \
+              -c:v libx264 -preset ultrafast -g $GOP -keyint_min $GOP -forced-idr 1 \
+              -c:a copy \
+              -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            sleep 90
+          done
+          
