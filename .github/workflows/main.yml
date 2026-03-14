@@ -1,0 +1,69 @@
+name: 🔴 YouTube 24/7 - INSTANT STREAM
+
+on:
+  workflow_dispatch:
+    inputs:
+      link1: { required: true }
+      link2: { required: true }
+      link3: { required: true }
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ⚡ Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg bc -qq
+          pip install -q gdown
+
+      - name: 📥 Download Videos
+        run: |
+          # Create videos directory
+          mkdir -p videos
+          cd videos
+          
+          # Download in parallel
+          gdown --id "${{ inputs.link1 }}" -O 1.mp4 &
+          gdown --id "${{ inputs.link2 }}" -O 2.mp4 &
+          gdown --id "${{ inputs.link3 }}" -O 3.mp4 &
+          wait
+          
+          # Verify downloads
+          ls -la
+          echo "✅ Videos downloaded successfully"
+          
+          # Stay in this directory for next steps
+          echo "VIDEO_DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: 🔴 Stream to YouTube
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          cd $VIDEO_DIR
+          
+          # Get FPS from first video
+          FPS=$(ffprobe -v error -select_streams v -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 1.mp4 | bc -l | awk '{printf "%.0f", $1}')
+          [ -z "$FPS" ] && FPS=30
+          GOP=$((FPS * 2))
+          
+          echo "🎯 FPS: $FPS | GOP: $GOP frames (2 seconds)"
+          echo "🚀 Starting stream..."
+          
+          # Create playlist
+          echo "file '1.mp4'" > playlist.txt
+          echo "file '2.mp4'" >> playlist.txt
+          echo "file '3.mp4'" >> playlist.txt
+          
+          while true; do
+            echo "📡 Streaming cycle started at $(date)"
+            
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i playlist.txt \
+              -c:v libx264 -preset ultrafast -g $GOP -keyint_min $GOP -forced-idr 1 \
+              -c:a copy \
+              -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            
+            echo "😴 Sleeping 90 seconds..."
+            sleep 90
+          done
