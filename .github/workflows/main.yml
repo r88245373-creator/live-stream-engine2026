@@ -1,0 +1,92 @@
+name: YouTube 24/7 - Auto Extract Drive ID
+
+on:
+  workflow_dispatch:
+    inputs:
+      link1:
+        description: '🔗 Google Drive Link #1'
+        required: true
+        default: 'https://drive.google.com/file/d/XXXXX/view'
+      link2:
+        description: '🔗 Google Drive Link #2'
+        required: true
+        default: 'https://drive.google.com/file/d/XXXXX/view'
+      link3:
+        description: '🔗 Google Drive Link #3'
+        required: true
+        default: 'https://drive.google.com/file/d/XXXXX/view'
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ⚡ Install Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg jq -qq
+          pip install -q gdown
+
+      - name: 🔍 Extract IDs & Download Videos
+        run: |
+          # Function to extract ID from any Google Drive link
+          extract_id() {
+            local link="$1"
+            
+            # Pattern 1: /file/d/XXXXX/view
+            if [[ "$link" =~ /file/d/([^/]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            # Pattern 2: id=XXXXX
+            elif [[ "$link" =~ id=([^&]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            # Pattern 3: open?id=XXXXX
+            elif [[ "$link" =~ open\?id=([^&]+) ]]; then
+              echo "${BASH_REMATCH[1]}"
+            # Pattern 4: Just the ID itself
+            else
+              echo "$link"
+            fi
+          }
+          
+          # Extract all IDs
+          ID1=$(extract_id "${{ inputs.link1 }}")
+          ID2=$(extract_id "${{ inputs.link2 }}")
+          ID3=$(extract_id "${{ inputs.link3 }}")
+          
+          echo "✅ Extracted IDs:"
+          echo "   Video 1: $ID1"
+          echo "   Video 2: $ID2"
+          echo "   Video 3: $ID3"
+          
+          # Download videos
+          echo "📥 Downloading videos..."
+          gdown --id "$ID1" -O video1.mp4
+          gdown --id "$ID2" -O video2.mp4
+          gdown --id "$ID3" -O video3.mp4
+          
+          # Verify downloads
+          ls -lh video*.mp4
+          
+          # Create playlist
+          echo "file 'video1.mp4'" > playlist.txt
+          echo "file 'video2.mp4'" >> playlist.txt
+          echo "file 'video3.mp4'" >> playlist.txt
+          
+          echo "✅ All videos ready!"
+
+      - name: 🔴 Start Streaming
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          echo "🎬 Starting 24/7 stream..."
+          
+          while true; do
+            # Stream for 5 hours
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i playlist.txt \
+              -c copy \
+              -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            
+            # 90 second nap
+            echo "😴 Sleeping 90s..."
+            sleep 90
+          done
