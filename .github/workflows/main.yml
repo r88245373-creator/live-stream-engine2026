@@ -1,0 +1,60 @@
+name: YouTube 24/7
+
+on:
+  workflow_dispatch:
+    inputs:
+      id1: { required: true }
+      id2: { required: true }
+      id3: { required: true }
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 43200
+    
+    steps:
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
+          pip install -q gdown
+
+      - name: Download Videos
+        run: |
+          # Create and enter videos directory
+          mkdir -p videos
+          cd videos
+          
+          # Download all videos
+          gdown --id "${{ inputs.id1 }}" -O 1.mp4
+          gdown --id "${{ inputs.id2 }}" -O 2.mp4
+          gdown --id "${{ inputs.id3 }}" -O 3.mp4
+          
+          # Create playlist with FULL paths
+          echo "file '$PWD/1.mp4'" > playlist.txt
+          echo "file '$PWD/2.mp4'" >> playlist.txt
+          echo "file '$PWD/3.mp4'" >> playlist.txt
+          
+          # Verify files exist
+          ls -la
+
+      - name: Stream
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          cd videos
+          
+          # Show playlist content
+          echo "Playlist:"
+          cat playlist.txt
+          
+          # Start streaming
+          while true; do
+            echo "🎬 Streaming for 5 hours..."
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i playlist.txt \
+              -c copy \
+              -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            
+            echo "💤 Sleeping 90 seconds..."
+            sleep 90
+          done
