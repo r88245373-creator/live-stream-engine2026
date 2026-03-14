@@ -1,0 +1,146 @@
+name: 24/7 YouTube Stream - 3 Videos with Sleep
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id_1:
+        description: '🎬 Google Drive video ID or LINK #1'
+        required: true
+        default: ''
+      video_id_2:
+        description: '🎬 Google Drive video ID or LINK #2'
+        required: true
+        default: ''
+      video_id_3:
+        description: '🎬 Google Drive video ID or LINK #3'
+        required: true
+        default: ''
+      stream_title:
+        description: '📺 Stream title'
+        required: false
+        default: '24/7 Live Stream'
+      privacy_status:
+        description: '🔒 Privacy (public/unlisted/private)'
+        required: false
+        default: 'unlisted'
+
+jobs:
+  youtube-stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 43200  # Keep this high as safety net
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq bc
+          pip install gdown
+          echo "✅ Tools installed"
+
+      - name: Download Videos from Google Drive
+        run: |
+          # Create videos directory
+          mkdir -p videos
+          cd videos
+          
+          # Extract ID function
+          extract_id() {
+            local input="$1"
+            if [[ $input == *"drive.google.com"* ]]; then
+              if [[ $input == *"/file/d/"* ]]; then
+                echo "$input" | grep -oP '/file/d/\K[^/]+'
+              elif [[ $input == *"id="* ]]; then
+                echo "$input" | grep -oP 'id=\K[^&]+'
+              else
+                echo "$input"
+              fi
+            else
+              echo "$input"
+            fi
+          }
+          
+          # Download all 3 videos
+          for i in 1 2 3; do
+            ID_VAR="VIDEO_ID_$i"
+            ID=$(extract_id "${!ID_VAR}")
+            echo "📥 Downloading video $i..."
+            gdown --id "$ID" -O "video$i.mp4"
+            
+            if [ ! -s "video$i.mp4" ]; then
+              echo "❌ Error: Video $i download failed"
+              exit 1
+            fi
+          done
+          
+          echo "✅ All 3 videos downloaded"
+          
+          # Create playlist
+          echo "file 'video1.mp4'" > playlist.txt
+          echo "file 'video2.mp4'" >> playlist.txt
+          echo "file 'video3.mp4'" >> playlist.txt
+          
+          cd ..
+
+      - name: Stream to YouTube with Sleep Cycles
+        env:
+          STREAM_KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          # Check stream key
+          if [ -z "$STREAM_KEY" ]; then
+            echo "❌ Error: YOUTUBE_STREAM_KEY secret is not set!"
+            exit 1
+          fi
+          
+          RTMP_URL="rtmp://a.rtmp.youtube.com/live2/$STREAM_KEY"
+          
+          echo "🎬 Starting 3-video loop stream to YouTube..."
+          echo "📹 Videos: 3 videos in loop"
+          echo "⏱️  Sleep cycle: 90 seconds every 5 hours"
+          echo "================================================"
+          
+          cd videos
+          
+          # Initialize cycle counter
+          CYCLE_COUNT=0
+          STREAM_START_TIME=$(date +%s)
+          
+          # Infinite stream loop with sleep cycles
+          while true; do
+            # Calculate current cycle
+            CURRENT_TIME=$(date +%s)
+            RUNTIME=$((CURRENT_TIME - STREAM_START_TIME))
+            CURRENT_CYCLE=$((RUNTIME / 18000))  # 5 hours = 18000 seconds
+            
+            # Check if we need to sleep (every 5 hours)
+            if [ $CURRENT_CYCLE -gt $CYCLE_COUNT ]; then
+              CYCLE_COUNT=$CURRENT_CYCLE
+              
+              echo ""
+              echo "😴 Cycle $CYCLE_COUNT completed - Taking 90 second nap..."
+              echo "⏱️  Stream runtime: $(($RUNTIME / 3600))h $(($RUNTIME % 3600 / 60))m"
+              echo ""
+              
+              # Stop current ffmpeg process
+              pkill -f ffmpeg || true
+              
+              # Sleep for 90 seconds
+              sleep 90
+              
+              echo "🚀 Waking up! Resuming stream..."
+              echo ""
+            fi
+            
+            # Stream with timeout protection (4.5 hours to be safe)
+            timeout 16200 ffmpeg -re -f concat -safe 0 -stream_loop -1 -i playlist.txt \
+              -c copy \
+              -f flv "$RTMP_URL" 2>&1 | tee -a /tmp/stream.log
+            
+            # If ffmpeg stops for any reason, wait a bit and restart
+            if [ $? -ne 0 ]; then
+              echo "⚠️ Stream interrupted. Restarting in 10 seconds..."
+              sleep 10
+            fi
+          done
