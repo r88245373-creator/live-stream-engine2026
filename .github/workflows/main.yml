@@ -1,0 +1,65 @@
+name: 🔴 YouTube 24/7 - INSTANT STREAM FIXED
+
+on:
+  workflow_dispatch:
+    inputs:
+      link1: { required: true }
+      link2: { required: true }
+      link3: { required: true }
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⚡ Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg -qq
+          pip install -q gdown
+
+      - name: 📥 Download videos
+        run: |
+          mkdir -p videos
+          cd videos
+          
+          # Download 3 videos in parallel
+          gdown --id "${{ inputs.link1 }}" -O 1.mp4 &
+          gdown --id "${{ inputs.link2 }}" -O 2.mp4 &
+          gdown --id "${{ inputs.link3 }}" -O 3.mp4 &
+          wait
+          
+          # List files to verify
+          ls -l
+
+      - name: 🔧 Prepare playlist and FPS
+        run: |
+          cd videos
+          
+          # Create playlist file
+          echo -e "file '1.mp4'\nfile '2.mp4'\nfile '3.mp4'" > playlist.txt
+          
+          # Get FPS from first video
+          FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 1.mp4 | bc -l | awk '{printf "%.0f", $1}')
+          [ -z "$FPS" ] && FPS=30
+          GOP=$((FPS * 2))
+          
+          echo "🎯 FPS: $FPS | GOP: $GOP frames (2 seconds)"
+
+      - name: 🔴 Start 24/7 Stream
+        env:
+          KEY: ${{ secrets.YOUTUBE_STREAM_KEY }}
+        run: |
+          cd videos
+          
+          echo "🚀 Starting 24/7 stream..."
+          
+          while true; do
+            timeout 18000 ffmpeg -re -stream_loop -1 -f concat -safe 0 -i playlist.txt \
+              -c:v libx264 -preset ultrafast -g $GOP -keyint_min $GOP -forced-idr 1 \
+              -c:a copy \
+              -f flv "rtmp://a.rtmp.youtube.com/live2/$KEY"
+            
+            echo "😴 Stream ended, retrying in 90s..."
+            sleep 90
+          done
